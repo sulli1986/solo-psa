@@ -3,7 +3,7 @@
 // charges, recurring services, billing summaries. Requires ANTHROPIC_API_KEY.
 import Anthropic from '@anthropic-ai/sdk';
 import { db, getSetting, getNumberSetting } from './db.js';
-import { buildRun, billableMinutes, mrrByClient, outstandingReceivables } from './billing.js';
+import { buildRun, billableMinutes, mrrByClient, outstandingReceivables, computeUserBilling } from './billing.js';
 import { logTicketEvent, allocateTicketNumber, findTicketByNumberOrId, formatTicketRef, isBillingResolved } from './ticket-utils.js';
 
 export function assistantConfigured() {
@@ -177,11 +177,17 @@ const executors = {
       "SELECT ticket_number, subject, status, priority FROM tickets WHERE client_id = ? AND status != 'closed' ORDER BY updated_at DESC"
     ).all(client.id).map((t) => ({ ...t, ref: formatTicketRef(t) }));
     const contacts = db.prepare('SELECT name, email, phone, is_primary FROM contacts WHERE client_id = ?').all(client.id);
+    const users = computeUserBilling(client);
     return {
       id: client.id,
       name: client.name,
       agreement: client.agreement_name,
       monthly_fee: client.monthly_fee,
+      per_user_fee: client.per_user_fee,
+      excluded_users: client.excluded_users ?? client.included_users,
+      billable_users: users.billable,
+      total_users: users.total,
+      user_count_source: client.user_count_source || 'pax8',
       hourly_rate: client.hourly_rate ?? getNumberSetting('default_hourly_rate', 150),
       mrr: Math.round((mrrByClient().get(client.id) ?? 0) * 100) / 100,
       unbilled_minutes: unbilledMinutes,

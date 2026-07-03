@@ -29,8 +29,15 @@ for (const sql of [
   'ALTER TABLE pax8_subscriptions ADD COLUMN billing_start TEXT',
   'ALTER TABLE pax8_subscriptions ADD COLUMN end_date TEXT',
   'ALTER TABLE pax8_subscriptions ADD COLUMN commitment_term TEXT',
-  "ALTER TABLE pax8_subscriptions ADD COLUMN bill_mode TEXT DEFAULT 'auto'",
-  'ALTER TABLE pax8_subscriptions ADD COLUMN bill_month INTEGER'
+  'ALTER TABLE pax8_subscriptions ADD COLUMN bill_mode TEXT DEFAULT \'auto\'',
+  'ALTER TABLE pax8_subscriptions ADD COLUMN bill_month INTEGER',
+  'ALTER TABLE clients ADD COLUMN per_user_fee REAL DEFAULT 0',
+  'ALTER TABLE clients ADD COLUMN included_users INTEGER DEFAULT 0',
+  'ALTER TABLE clients ADD COLUMN excluded_users INTEGER DEFAULT 0',
+  "ALTER TABLE clients ADD COLUMN user_count_source TEXT DEFAULT 'pax8'",
+  'ALTER TABLE clients ADD COLUMN user_count INTEGER',
+  'ALTER TABLE clients ADD COLUMN ms_tenant_id TEXT',
+  'ALTER TABLE pax8_products ADD COLUMN counts_as_user INTEGER'
 ]) {
   try { raw.exec(sql); } catch { /* column already exists */ }
 }
@@ -69,7 +76,22 @@ try {
   raw.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_attachments_graph ON ticket_attachments(graph_attachment_id, message_id)');
 } catch { /* ignore */ }
 
+try {
+  raw.exec(`CREATE TABLE IF NOT EXISTS client_license_count (
+    client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    product_id TEXT NOT NULL,
+    counts_as_user INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (client_id, product_id)
+  )`);
+} catch { /* ignore */ }
+try {
+  raw.exec("UPDATE clients SET user_count_source = 'pax8' WHERE user_count_source = 'selected'");
+} catch { /* ignore */ }
+
 raw.exec(readFileSync(join(__dirname, 'schema.sql'), 'utf8'));
+try {
+  raw.exec('UPDATE clients SET excluded_users = included_users WHERE COALESCE(excluded_users, 0) = 0 AND COALESCE(included_users, 0) > 0');
+} catch { /* ignore */ }
 
 export const db = {
   prepare: (sql) => raw.prepare(sql),

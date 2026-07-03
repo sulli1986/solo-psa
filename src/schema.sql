@@ -11,7 +11,12 @@ CREATE TABLE IF NOT EXISTS clients (
   xero_contact_id TEXT,
   pax8_company_id TEXT,
   agreement_name  TEXT,            -- e.g. "Managed Essentials"
-  monthly_fee     REAL DEFAULT 0,  -- flat agreement fee (ex GST)
+  monthly_fee     REAL DEFAULT 0,  -- flat base fee (ex GST), before per-user
+  per_user_fee    REAL DEFAULT 0,  -- managed services fee per billable user (ex GST)
+  excluded_users INTEGER DEFAULT 0, -- users excluded from per-user billing count
+  user_count_source TEXT DEFAULT 'pax8', -- pax8 | manual
+  user_count      INTEGER,         -- manual user count when source = manual
+  ms_tenant_id    TEXT,            -- customer Entra tenant for M365 user sync
   hourly_rate     REAL,            -- NULL = use default from settings
   bill_pax8       INTEGER DEFAULT 1,
   notes           TEXT,
@@ -131,12 +136,20 @@ CREATE TABLE IF NOT EXISTS recurring_services (
 );
 CREATE INDEX IF NOT EXISTS idx_services_client ON recurring_services(client_id, active);
 
+CREATE TABLE IF NOT EXISTS client_license_count (
+  client_id       INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  product_id      TEXT NOT NULL REFERENCES pax8_products(id),
+  counts_as_user  INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (client_id, product_id)
+);
+
 CREATE TABLE IF NOT EXISTS pax8_products (
   id         TEXT PRIMARY KEY,     -- Pax8 productId
   name       TEXT,
   vendor     TEXT,
   buy_price  REAL,                 -- partner buy rate (partnerBuyRate from Pax8 pricing API)
-  sell_price REAL                  -- sell price; synced from Pax8 RRP, or manual override
+  sell_price REAL,                 -- sell price; synced from Pax8 RRP, or manual override
+  counts_as_user INTEGER           -- 1 = counts toward managed-service user total; 0 = exclude; NULL = auto
 );
 
 CREATE TABLE IF NOT EXISTS pax8_subscriptions (

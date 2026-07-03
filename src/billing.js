@@ -2,7 +2,7 @@
 //   1) flat agreement fee, 2) Pax8 subscription lines at sell price,
 //   3) unbilled billable time, 4) manual charges, 5) Pax8 prorata — then push each as a Xero draft invoice.
 import { db, getSetting, getNumberSetting } from './db.js';
-import { sellPrice, subTermMonths } from './integrations/pax8.js';
+import { sellPrice, subTermMonths, defaultCountsAsUser } from './integrations/pax8.js';
 export { subTermMonths };
 import { createDraftInvoice } from './integrations/xero.js';
 import { formatTicketRef } from './ticket-utils.js';
@@ -88,11 +88,101 @@ function labourLineDescription(entry) {
   return [header, detail, `${date} · ${timeLine}`].join('\n');
 }
 
+function productCountsAsUser(product) {
+  if (product.counts_as_user != null) return product.counts_as_user ? 1 : 0;
+  return defaultCountsAsUser(product.name, product.vendor);
+}
+
+function clientProductCounts(clientId, product) {
+  const row = db.prepare(
+    'SELECT counts_as_user FROM client_license_count WHERE client_id = ? AND product_id = ?'
+  ).get(clientId, product.product_id || product.id);
+  if (row != null) return row.counts_as_user ? 1 : 0;
+  return productCountsAsUser(product);
+}
+
+// Active Pax8 license lines for per-client user-count tuning (no individual user names).
+export function clientLicenseProducts(clientId) {
+  return db.prepare(`
+    SELECT p.id AS product_id, p.name, p.vendor, p.counts_as_user AS global_counts,
+      COALESCE(SUM(s.quantity), 0) AS quantity,
+      lc.counts_as_user AS client_counts
+    FROM pax8_subscriptions s
+    JOIN pax8_products p ON p.id = s.product_id
+    LEFT JOIN client_license_count lc ON lc.client_id = s.client_id AND lc.product_id = p.id
+    WHERE s.client_id = ? AND s.status = 'Active' AND s.quantity > 0
+    GROUP BY p.id
+    ORDER BY p.name
+  `).all(clientId).map((r) => ({
+    productId: r.product_id,
+    name: r.name,
+    quantity: r.quantity,
+    counts: r.client_counts != null
+      ? Boolean(r.client_counts)
+      : Boolean(productCountsAsUser(r))
+  }));
+}
+
+// Billable user count for managed-service per-user pricing.
+export function computeUserBilling(client) {
+  const source = client.user_count_source === 'manual' ? 'manual' : 'pax8';
+  const excluded = Math.max(0, Number(client.excluded_users ?? client.included_users) || 0);
+  const perUserFee = Number(client.per_user_fee) || 0;
+
+  if (source === 'manual') {
+    const total = Math.max(0, Number(client.user_count) || 0);
+    return {
+      source,
+      total,
+      billable: Math.max(0, total - excluded),
+      excluded,
+      perUserFee,
+      breakdown: total ? [{ name: 'Manual count', quantity: total }] : []
+    };
+  }
+
+  const rows = db.prepare(`
+    SELECT s.quantity, s.bill_mode, s.product_id, p.name, p.vendor, p.counts_as_user
+    FROM pax8_subscriptions s
+    LEFT JOIN pax8_products p ON p.id = s.product_id
+    WHERE s.client_id = ? AND s.status = 'Active' AND s.quantity > 0
+    ORDER BY p.name
+  `).all(client.id);
+
+  const breakdown = [];
+  let total = 0;
+  for (const r of rows) {
+    if (r.bill_mode === 'skip') continue;
+    if (!clientProductCounts(client.id, r)) continue;
+    total += r.quantity;
+    const existing = breakdown.find((b) => b.name === (r.name || r.product_id));
+    if (existing) existing.quantity += r.quantity;
+    else breakdown.push({ name: r.name || 'Unknown product', quantity: r.quantity });
+  }
+
+  return {
+    source,
+    total,
+    billable: Math.max(0, total - excluded),
+    excluded,
+    perUserFee,
+    breakdown
+  };
+}
+
+function agreementMrr(client) {
+  const users = computeUserBilling(client);
+  return (Number(client.monthly_fee) || 0) + users.billable * users.perUserFee;
+}
+
 // Monthly-recurring revenue per active client: agreement fee + Pax8 subs + recurring
 // services, all at monthly-equivalent sell price (annual ÷ 12, respecting overrides).
 export function mrrByClient() {
-  const clients = db.prepare('SELECT id, monthly_fee, bill_pax8 FROM clients WHERE active = 1').all();
-  const map = new Map(clients.map((c) => [c.id, c.monthly_fee || 0]));
+  const clients = db.prepare(`
+    SELECT id, monthly_fee, per_user_fee, excluded_users, user_count_source, user_count, bill_pax8
+    FROM clients WHERE active = 1
+  `).all();
+  const map = new Map(clients.map((c) => [c.id, agreementMrr(c)]));
   const billPax8 = new Map(clients.map((c) => [c.id, c.bill_pax8]));
   const subs = db.prepare(`
     SELECT s.client_id, s.quantity, s.buy_price, s.billing_term,
@@ -168,14 +258,34 @@ export function buildRun(period) {
     const manualChargeIds = [];
     const prorataIds = [];
 
+    const users = computeUserBilling(client);
+
     if (client.monthly_fee > 0) {
       lines.push({
         lineKey: `a:${client.id}`,
         kind: 'agreement',
         editable: false,
-        description: `${client.agreement_name || 'Managed services agreement'} — ${label}`,
+        description: `${client.agreement_name || 'Managed services agreement'} — ${label}`
+          + (users.excluded > 0 ? `\n${users.excluded} user${users.excluded === 1 ? '' : 's'} excluded from per-user count` : ''),
         quantity: 1,
         unitAmount: client.monthly_fee,
+        accountCode: agreementAcct
+      });
+    }
+
+    if (users.perUserFee > 0 && users.billable > 0) {
+      lines.push({
+        lineKey: `u:${client.id}`,
+        kind: 'agreement',
+        editable: false,
+        description: `${client.agreement_name || 'Managed services'} — per user — ${label}`
+          + `\n${users.billable} billable user${users.billable === 1 ? '' : 's'}`
+          + (users.excluded > 0 ? ` (${users.excluded} excluded)` : '')
+          + (users.breakdown.length
+            ? `\n${users.breakdown.map((b) => `${b.name}: ${b.quantity}`).join(', ')}`
+            : ''),
+        quantity: users.billable,
+        unitAmount: users.perUserFee,
         accountCode: agreementAcct
       });
     }

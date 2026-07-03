@@ -1,7 +1,17 @@
 <%- include('partials/head') %>
+<% const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']; %>
+<% const tabs = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'billing', label: 'Billing' },
+  { id: 'time', label: 'Time & tickets' },
+  { id: 'contacts', label: 'Contacts' },
+  { id: 'settings', label: 'Settings' }
+]; %>
+<% function tabHref(t) { return t === 'overview' ? `/clients/${cust.id}` : `/clients/${cust.id}?tab=${t}`; } %>
 
 <header class="page-head">
   <div class="head-title">
+    <a class="btn btn-ghost btn-sm" href="/clients" style="margin-right:4px">← Clients</a>
     <h1><%= cust.name %></h1>
     <span class="pill <%= cust.pax8_company_id ? 'int-ok' : 'int-off' %>">Pax8</span>
     <span class="pill <%= cust.xero_contact_id ? 'int-ok' : 'int-off' %>">Xero</span>
@@ -24,21 +34,50 @@
 <section class="stat-row stat-row-4">
   <div class="stat"><span class="stat-n"><%= mrr > 0 ? money(mrr) : '—' %></span><span class="stat-l">Monthly recurring</span></div>
   <div class="stat">
+    <span class="stat-n"><%= userBilling.billable %></span>
+    <span class="stat-l">Billable seats · <%= userBilling.total %> licensed<% if (userBilling.source === 'pax8') { %> (Pax8)<% } %></span>
+  </div>
+  <div class="stat">
     <span class="stat-n"><%= (unbilledMinutes / 60).toFixed(1) %>h</span>
     <span class="stat-l">Unbilled time · ≈<%= money(unbilledValue) %></span>
   </div>
-  <div class="stat"><span class="stat-n"><%= openTickets %></span><span class="stat-l">Open tickets</span></div>
   <div class="stat">
     <span class="stat-n"><%= nextInvoice ? money(nextInvoice.total) : '—' %></span>
     <span class="stat-l">Next invoice est. (<%= period %>)</span>
   </div>
 </section>
 
+<nav class="seg client-tabs" aria-label="Client sections">
+  <% for (const t of tabs) { %>
+    <a href="<%= tabHref(t.id) %>" class="<%= tab === t.id ? 'active' : '' %>"><%= t.label %></a>
+  <% } %>
+</nav>
+
+<% if (cust.active) { %>
+<div class="page-actions">
+  <% if (tab === 'overview' || tab === 'billing') { %>
+    <button type="button" class="btn" id="open-manual-line">+ Manual line</button>
+    <button type="button" class="btn btn-ghost" id="open-recurring-service">+ Recurring service</button>
+  <% } %>
+  <% if (tab === 'overview') { %>
+    <a class="btn btn-ghost" href="<%= tabHref('billing') %>">Manage billing →</a>
+  <% } %>
+  <% if (tab === 'billing') { %>
+    <a class="btn btn-ghost" href="/billing">Billing page →</a>
+  <% } %>
+  <% if (tab === 'time') { %>
+    <a class="btn btn-ghost" href="/tickets?client_id=<%= cust.id %>">View all tickets</a>
+  <% } %>
+</div>
+<% } %>
+
+<!-- ── Overview ── -->
+<% if (tab === 'overview') { %>
 <section class="grid-2">
   <div class="card">
     <div class="card-head">
       <h2>Next invoice preview</h2>
-      <a class="link" href="/billing">Billing page →</a>
+      <a class="link" href="<%= tabHref('billing') %>">Billing details →</a>
     </div>
     <% if (nextInvoice && nextInvoice.lines.length) { %>
       <% if (nextInvoice.alreadyInvoiced) { %>
@@ -62,7 +101,7 @@
         </tbody>
       </table>
     <% } else { %>
-      <p class="empty">Nothing accrued for <%= period %> yet — no agreement fee, subscriptions, unbilled time or manual lines.</p>
+      <p class="empty">Nothing accrued for <%= period %> yet.</p>
     <% } %>
   </div>
 
@@ -90,6 +129,277 @@
   </div>
 </section>
 
+<section class="grid-2">
+  <div class="card">
+    <div class="card-head">
+      <h2>Recent invoices</h2>
+      <a class="link" href="<%= tabHref('billing') %>">All billing →</a>
+    </div>
+    <% if (invoices.length) { %>
+      <table class="table">
+        <thead><tr><th>Date</th><th>Invoice</th><th class="num">Total</th><th>Status</th></tr></thead>
+        <tbody>
+          <% for (const i of invoices.slice(0, 6)) { %>
+            <tr>
+              <td class="mono"><%= fmtDate(i.invoice_date || i.created_at) %></td>
+              <td class="mono">
+                <% if (i.xeroUrl) { %>
+                  <a class="link" href="<%= i.xeroUrl %>" target="_blank" rel="noopener"><%= i.xero_number || 'Open in Xero' %></a>
+                <% } else { %>
+                  <%= i.xero_number || i.xero_invoice_id || '—' %>
+                <% } %>
+              </td>
+              <td class="num mono"><%= money(i.total) %></td>
+              <td>
+                <% const st = (i.status || 'draft').toLowerCase(); %>
+                <% if (st === 'paid') { %><span class="pill inv-paid">paid</span>
+                <% } else if (st === 'unpaid' || st === 'authorised' || st === 'submitted') { %><span class="pill inv-unpaid">unpaid</span>
+                <% } else if (st === 'draft') { %><span class="pill inv-draft">draft</span>
+                <% } else { %><span class="pill int-off"><%= st %></span><% } %>
+              </td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+    <% } else { %>
+      <p class="empty">Nothing invoiced yet.</p>
+    <% } %>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>Open tickets</h2>
+      <a class="link" href="<%= tabHref('time') %>">Time & tickets →</a>
+    </div>
+    <% const openList = tickets.filter((t) => t.status !== 'closed').slice(0, 6); %>
+    <% if (openList.length) { %>
+      <ul class="ticket-list">
+        <% for (const t of openList) { %>
+          <li><a class="link mono" href="/tickets/<%= t.id %>"><%= ticketRef(t) %></a> <%= t.subject %> <span class="pill st-<%= t.status %>"><%= t.status.replace('_', ' ') %></span></li>
+        <% } %>
+      </ul>
+    <% } else { %>
+      <p class="empty">No open tickets.</p>
+    <% } %>
+  </div>
+</section>
+<% } %>
+
+<!-- ── Billing ── -->
+<% if (tab === 'billing') { %>
+<div class="card">
+  <div class="card-head">
+    <h2>Managed service users</h2>
+    <a class="link" href="<%= tabHref('settings') %>">Edit contract →</a>
+  </div>
+  <p>
+    <strong><%= userBilling.billable %></strong> billable user<%= userBilling.billable === 1 ? '' : 's' %>
+    <% if (userBilling.excluded > 0) { %>(<%= userBilling.excluded %> excluded)<% } %>
+    · <%= userBilling.total %> from licenses
+    <% if (userBilling.source === 'manual') { %> (manual)<% } %>
+    <% if (userBilling.perUserFee > 0) { %> · <%= money(userBilling.perUserFee) %>/user<% } %>
+  </p>
+  <% if (userBilling.breakdown.length) { %>
+    <ul class="ticket-list">
+      <% for (const b of userBilling.breakdown) { %>
+        <li><span class="mono"><%= b.quantity %></span> — <%= b.name %></li>
+      <% } %>
+    </ul>
+  <% } else if (userBilling.source === 'pax8') { %>
+    <p class="empty">No license seats counting yet. Link Pax8 and choose license types under Settings.</p>
+  <% } %>
+</div>
+
+<section class="grid-2">
+  <div class="card">
+    <div class="card-head">
+      <h2>Manual invoice lines</h2>
+      <span class="muted"><%= manualCharges.length %> unbilled</span>
+    </div>
+    <% if (manualCharges.length) { %>
+      <div class="line-items">
+        <% for (const ch of manualCharges) { %>
+          <form method="post" action="/clients/<%= cust.id %>/charges/<%= ch.id %>" class="line-item-form stack">
+            <label>Description
+              <textarea name="description" rows="3" class="desc-input" required><%= ch.description %></textarea>
+            </label>
+            <div class="row-2">
+              <label>Amount (ex GST) <input name="unit_amount" type="number" step="0.01" min="0.01" value="<%= ch.unit_amount %>" required></label>
+              <div class="line-item-actions">
+                <button class="btn btn-sm">Save</button>
+                <button form="del-ch-<%= ch.id %>" class="btn btn-ghost btn-sm" type="submit">Remove</button>
+              </div>
+            </div>
+          </form>
+          <form id="del-ch-<%= ch.id %>" method="post" action="/clients/<%= cust.id %>/charges/<%= ch.id %>/delete" hidden onsubmit="return confirm('Remove this line?')"></form>
+        <% } %>
+      </div>
+    <% } else { %>
+      <p class="empty">No manual lines yet. Use <strong>+ Manual line</strong> above or <span class="mono">/charge</span> in Telegram.</p>
+    <% } %>
+  </div>
+
+  <div class="card">
+    <% const svcMonthlyEq = services.filter((s) => s.active)
+         .reduce((t, s) => t + (s.quantity * s.sell_price) / (s.months || 1), 0); %>
+    <div class="card-head">
+      <h2>Recurring services</h2>
+      <span class="muted mono">≈<%= money(svcMonthlyEq) %>/mo</span>
+    </div>
+    <% if (services.length) { %>
+      <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Service</th><th class="num">Qty</th><th class="num">Cost</th><th class="num">Sell</th><th>Bills</th><th>On</th><th></th></tr></thead>
+        <tbody>
+          <% for (const s of services) { %>
+            <tr>
+              <td>
+                <form id="svc-<%= s.id %>" method="post" action="/clients/<%= cust.id %>/services/<%= s.id %>"></form>
+                <input form="svc-<%= s.id %>" name="name" value="<%= s.name %>" required>
+                <input form="svc-<%= s.id %>" name="description" value="<%= s.description || '' %>" placeholder="extra invoice line text" style="margin-top:4px;font-size:12px">
+              </td>
+              <td class="num"><input form="svc-<%= s.id %>" name="quantity" type="number" step="any" min="0.01" class="cell-input" value="<%= s.quantity %>"></td>
+              <td class="num"><input form="svc-<%= s.id %>" name="cost_price" type="number" step="0.01" min="0" class="cell-input" value="<%= s.cost_price || 0 %>"></td>
+              <td class="num"><input form="svc-<%= s.id %>" name="sell_price" type="number" step="0.01" min="0.01" class="cell-input" value="<%= s.sell_price %>" required></td>
+              <td class="row-actions">
+                <select form="svc-<%= s.id %>" name="months" style="width:auto">
+                  <option value="1" <%= s.months === 1 ? 'selected' : '' %>>monthly</option>
+                  <option value="12" <%= s.months === 12 ? 'selected' : '' %>>annual</option>
+                </select>
+                <select form="svc-<%= s.id %>" name="bill_month" style="width:auto" title="Renewal month for annual services">
+                  <option value="">renews: —</option>
+                  <% for (let m = 1; m <= 12; m++) { %>
+                    <option value="<%= m %>" <%= s.bill_month === m ? 'selected' : '' %>>renews: <%= MONTHS[m - 1] %></option>
+                  <% } %>
+                </select>
+              </td>
+              <td><input form="svc-<%= s.id %>" type="checkbox" name="active" <%= s.active ? 'checked' : '' %> title="Include in billing runs"></td>
+              <td class="row-actions">
+                <button form="svc-<%= s.id %>" class="btn btn-ghost btn-sm">Save</button>
+                <button form="svc-<%= s.id %>" formaction="/clients/<%= cust.id %>/services/<%= s.id %>/delete" class="btn-x" title="Remove service" onclick="return confirm('Remove this recurring service?')">×</button>
+              </td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+      </div>
+    <% } else { %>
+      <p class="empty">No recurring services yet. Use <strong>+ Recurring service</strong> above.</p>
+    <% } %>
+  </div>
+</section>
+
+<section class="card">
+  <% const subsMonthlyEq = subs.filter((s) => s.status === 'Active' && s.quantity > 0)
+       .reduce((t, s) => t + (s.billing.months ? (s.quantity * s.sell) / s.billing.months : 0), 0); %>
+  <div class="card-head">
+    <h2>Pax8 subscriptions</h2>
+    <span class="muted mono">≈<%= money(subsMonthlyEq) %>/mo equivalent</span>
+  </div>
+  <% if (subs.length) { %>
+    <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Product</th><th class="num">Qty</th><th>Term</th><th class="num">Sell/unit</th><th>Bills</th><th>Status</th></tr></thead>
+      <tbody>
+        <% for (const s of subs) { %>
+          <tr>
+            <td>
+              <%= s.product_name || s.product_id %>
+              <% if (s.commitment_term) { %><span class="muted" style="display:block;font-size:11px">commit: <%= s.commitment_term %></span><% } %>
+            </td>
+            <td class="num mono"><%= s.quantity %></td>
+            <td class="mono"><%= s.billing_term || '—' %></td>
+            <td class="num mono" title="buy <%= money(s.p_buy ?? s.buy_price ?? 0) %>"><%= money(s.sell) %></td>
+            <td class="mono">
+              <% if (!s.billing.months) { %>
+                <span class="muted">never</span>
+              <% } else if (s.billing.months === 1) { %>
+                monthly
+              <% } else { %>
+                <% if (s.billing.nextRenewal) { %>
+                  renews <%= s.billing.nextRenewal %>
+                <% } else { %>
+                  <span class="muted">renewal date unknown — run a Pax8 sync</span>
+                <% } %>
+                <span class="muted" style="display:block;font-size:11px">billed from Pax8 invoice</span>
+              <% } %>
+              <% if (s.prorata) { %>
+                <form method="post" action="/clients/<%= cust.id %>/subs/<%= s.id %>/prorata" style="margin-top:4px"
+                      onsubmit="return confirm('Add a manual invoice line of A$<%= s.prorata.amount.toFixed(2) %> covering <%= s.prorata.daysLeft %> days to <%= s.billing.renewsOn %>?')">
+                  <button class="btn btn-ghost btn-sm" title="Bill the remaining term as a manual line">
+                    Pro-rata <%= money(s.prorata.amount) %>
+                  </button>
+                </form>
+              <% } %>
+            </td>
+            <td><span class="pill <%= s.status === 'Active' ? 'int-ok' : 'int-off' %>"><%= s.status %></span></td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+    </div>
+    <p class="muted">Monthly terms bill every run. Annual renewals are picked up from Pax8's draft invoice.</p>
+  <% } else { %>
+    <p class="empty">No subscriptions linked. Link the Pax8 company in Settings and run a sync.</p>
+  <% } %>
+  <% if (prorata.length) { %>
+    <div class="card-head" style="margin-top:16px"><h2>Pending Pax8 prorata</h2></div>
+    <ul class="ticket-list">
+      <% for (const p of prorata) { %>
+        <li><span class="mono"><%= money(p.sell_amount ?? p.buy_amount) %></span> — <span class="desc-multiline"><%= p.description %></span></li>
+      <% } %>
+    </ul>
+    <p class="muted">Edit on the <a class="link" href="/billing">Billing</a> page before pushing.</p>
+  <% } %>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Invoice history</h2></div>
+  <% if (invoices.length) { %>
+    <table class="table">
+      <thead><tr><th>Invoice date</th><th>Xero invoice</th><th class="num">Total</th><th>Synced</th><th>Payment</th></tr></thead>
+      <tbody>
+        <% for (const i of invoices) { %>
+          <tr>
+            <td class="mono"><%= fmtDate(i.invoice_date || i.created_at) %></td>
+            <td class="mono">
+              <% if (i.xeroUrl) { %>
+                <a class="link" href="<%= i.xeroUrl %>" target="_blank" rel="noopener"><%= i.xero_number || 'Open in Xero' %></a>
+              <% } else { %>
+                <%= i.xero_number || i.xero_invoice_id || '—' %>
+              <% } %>
+            </td>
+            <td class="num mono"><%= money(i.total) %></td>
+            <td>
+              <% if (i.synced) { %>
+                <span class="pill int-ok">synced</span>
+                <% if (i.status_synced_at) { %><span class="muted mono" style="display:block;font-size:11px;margin-top:2px"><%= fmtDateTimeShort(i.status_synced_at) %></span><% } %>
+              <% } else { %>
+                <span class="pill int-off">not synced</span>
+              <% } %>
+            </td>
+            <td>
+              <% const st = (i.status || 'draft').toLowerCase(); %>
+              <% if (st === 'paid') { %><span class="pill inv-paid">paid</span>
+              <% } else if (st === 'unpaid' || st === 'authorised' || st === 'submitted') { %>
+                <span class="pill inv-unpaid">unpaid</span>
+                <% if (i.amount_due != null && i.amount_due > 0) { %><span class="muted mono" style="display:block;font-size:11px;margin-top:2px"><%= money(i.amount_due) %> due</span><% } %>
+              <% } else if (st === 'draft') { %><span class="pill inv-draft">draft</span>
+              <% } else if (st === 'voided') { %><span class="pill pri-critical">voided</span>
+              <% } else { %><span class="pill int-off"><%= st %></span><% } %>
+            </td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  <% } else { %>
+    <p class="empty">Nothing invoiced yet. Push lines from the Billing page.</p>
+  <% } %>
+</section>
+<% } %>
+
+<!-- ── Time & tickets ── -->
+<% if (tab === 'time') { %>
 <section class="grid-2">
   <div class="card">
     <div class="card-head">
@@ -163,275 +473,92 @@
     </form>
   </div>
 </section>
+<% } %>
 
-<section class="grid-2">
-  <div class="card">
-    <div class="card-head">
-      <h2>Manual invoice lines</h2>
-      <span class="muted">Unbilled one-off lines for the next run</span>
-    </div>
-    <% if (manualCharges.length) { %>
-      <div class="line-items">
-        <% for (const ch of manualCharges) { %>
-          <form method="post" action="/clients/<%= cust.id %>/charges/<%= ch.id %>" class="line-item-form stack">
-            <label>Description
-              <textarea name="description" rows="4" class="desc-input" required><%= ch.description %></textarea>
-            </label>
-            <div class="row-2">
-              <label>Amount (ex GST) <input name="unit_amount" type="number" step="0.01" min="0.01" value="<%= ch.unit_amount %>" required></label>
-              <div class="line-item-actions">
-                <button class="btn">Save</button>
-              </div>
-            </div>
-          </form>
-          <form method="post" action="/clients/<%= cust.id %>/charges/<%= ch.id %>/delete" class="line-item-delete" onsubmit="return confirm('Remove this line?')">
-            <button class="btn btn-ghost">Remove line #<%= ch.id %></button>
-          </form>
-        <% } %>
-      </div>
-    <% } else { %>
-      <p class="empty">No manual lines yet. Add a one-off charge below or use <span class="mono">/charge</span> in Telegram.</p>
-    <% } %>
-    <form method="post" action="/clients/<%= cust.id %>/charges" class="stack" style="margin-top:16px">
-      <div class="card-head" style="margin-bottom:0"><h2>Add manual line</h2></div>
-      <label>Description
-        <textarea name="description" rows="4" class="desc-input" placeholder="Line text as it should appear on the Xero invoice (multiple lines OK)" required></textarea>
-      </label>
-      <div class="row-2">
-        <label>Amount (ex GST) <input name="unit_amount" type="number" step="0.01" min="0.01" required></label>
-        <div class="line-item-actions"><button class="btn">Add line</button></div>
-      </div>
-    </form>
-  </div>
-
-  <div class="card">
-    <% const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']; %>
-    <% const subsMonthlyEq = subs.filter((s) => s.status === 'Active' && s.quantity > 0)
-         .reduce((t, s) => t + (s.billing.months ? (s.quantity * s.sell) / s.billing.months : 0), 0); %>
-    <div class="card-head">
-      <h2>Pax8 subscriptions</h2>
-      <span class="muted mono">≈<%= money(subsMonthlyEq) %>/mo equivalent</span>
-    </div>
-    <% if (subs.length) { %>
-      <div class="table-wrap">
-      <table class="table">
-        <thead><tr><th>Product</th><th class="num">Qty</th><th>Term</th><th class="num">Sell/unit</th><th>Bills</th><th>Status</th></tr></thead>
-        <tbody>
-          <% for (const s of subs) { %>
-            <tr>
-              <td>
-                <%= s.product_name || s.product_id %>
-                <% if (s.commitment_term) { %><span class="muted" style="display:block;font-size:11px">commit: <%= s.commitment_term %></span><% } %>
-              </td>
-              <td class="num mono"><%= s.quantity %></td>
-              <td class="mono"><%= s.billing_term || '—' %></td>
-              <td class="num mono" title="buy <%= money(s.p_buy ?? s.buy_price ?? 0) %>"><%= money(s.sell) %></td>
-              <td class="mono">
-                <% if (!s.billing.months) { %>
-                  <span class="muted">never</span>
-                <% } else if (s.billing.months === 1) { %>
-                  monthly
-                <% } else { %>
-                  <% if (s.billing.nextRenewal) { %>
-                    renews <%= s.billing.nextRenewal %>
-                  <% } else { %>
-                    <span class="muted">renewal date unknown — run a Pax8 sync</span>
-                  <% } %>
-                  <span class="muted" style="display:block;font-size:11px">billed automatically from the Pax8 invoice</span>
-                <% } %>
-                <% if (s.prorata) { %>
-                  <form method="post" action="/clients/<%= cust.id %>/subs/<%= s.id %>/prorata" style="margin-top:4px"
-                        onsubmit="return confirm('Add a manual invoice line of A$<%= s.prorata.amount.toFixed(2) %> covering <%= s.prorata.daysLeft %> days to <%= s.billing.renewsOn %>?')">
-                    <button class="btn btn-ghost btn-sm" title="Bill the remaining term (<%= s.prorata.daysLeft %> of <%= s.prorata.termDays %> days) as a manual line">
-                      Pro-rata <%= money(s.prorata.amount) %>
-                    </button>
-                  </form>
-                <% } %>
-              </td>
-              <td><span class="pill <%= s.status === 'Active' ? 'int-ok' : 'int-off' %>"><%= s.status %></span></td>
-            </tr>
-          <% } %>
-        </tbody>
-      </table>
-      </div>
-      <p class="muted">Monthly terms bill every run. Annual / multi-year renewals are picked up automatically from Pax8's draft invoice when Pax8 charges them — exact quantities and pro-rating included — and appear on the Billing page as renewal lines.</p>
-    <% } else { %>
-      <p class="empty">No subscriptions linked. Pick the Pax8 company below and run a sync from Settings.</p>
-    <% } %>
-    <% if (prorata.length) { %>
-      <div class="card-head" style="margin-top:16px"><h2>Pending Pax8 prorata</h2></div>
-      <ul class="ticket-list">
-        <% for (const p of prorata) { %>
-          <li><span class="mono"><%= money(p.sell_amount ?? p.buy_amount) %></span> — <span class="desc-multiline"><%= p.description %></span></li>
-        <% } %>
-      </ul>
-      <p class="muted">Edit on the <a class="link" href="/billing">Billing</a> page before pushing.</p>
-    <% } %>
-  </div>
-
-  <div class="card">
-    <% const svcMonthlyEq = services.filter((s) => s.active)
-         .reduce((t, s) => t + (s.quantity * s.sell_price) / (s.months || 1), 0); %>
-    <div class="card-head">
-      <h2>Recurring services</h2>
-      <span class="muted mono">≈<%= money(svcMonthlyEq) %>/mo equivalent</span>
-    </div>
-    <% if (services.length) { %>
-      <div class="table-wrap">
-      <table class="table">
-        <thead><tr><th>Service</th><th class="num">Qty</th><th class="num">Cost/unit</th><th class="num">Sell/unit</th><th>Bills</th><th>On</th><th></th></tr></thead>
-        <tbody>
-          <% for (const s of services) { %>
-            <tr>
-              <td>
-                <form id="svc-<%= s.id %>" method="post" action="/clients/<%= cust.id %>/services/<%= s.id %>"></form>
-                <input form="svc-<%= s.id %>" name="name" value="<%= s.name %>" required>
-                <input form="svc-<%= s.id %>" name="description" value="<%= s.description || '' %>" placeholder="extra invoice line text" style="margin-top:4px;font-size:12px">
-              </td>
-              <td class="num"><input form="svc-<%= s.id %>" name="quantity" type="number" step="any" min="0.01" class="cell-input" value="<%= s.quantity %>"></td>
-              <td class="num"><input form="svc-<%= s.id %>" name="cost_price" type="number" step="0.01" min="0" class="cell-input" value="<%= s.cost_price || 0 %>"></td>
-              <td class="num"><input form="svc-<%= s.id %>" name="sell_price" type="number" step="0.01" min="0.01" class="cell-input" value="<%= s.sell_price %>" required></td>
-              <td class="row-actions">
-                <select form="svc-<%= s.id %>" name="months" style="width:auto">
-                  <option value="1" <%= s.months === 1 ? 'selected' : '' %>>monthly</option>
-                  <option value="12" <%= s.months === 12 ? 'selected' : '' %>>annual</option>
-                </select>
-                <select form="svc-<%= s.id %>" name="bill_month" style="width:auto" title="Renewal month for annual services">
-                  <option value="">renews: —</option>
-                  <% for (let m = 1; m <= 12; m++) { %>
-                    <option value="<%= m %>" <%= s.bill_month === m ? 'selected' : '' %>>renews: <%= MONTHS[m - 1] %></option>
-                  <% } %>
-                </select>
-              </td>
-              <td><input form="svc-<%= s.id %>" type="checkbox" name="active" <%= s.active ? 'checked' : '' %> title="Include in billing runs"></td>
-              <td class="row-actions">
-                <button form="svc-<%= s.id %>" class="btn btn-ghost btn-sm">Save</button>
-                <button form="svc-<%= s.id %>" formaction="/clients/<%= cust.id %>/services/<%= s.id %>/delete" class="btn-x" title="Remove service" onclick="return confirm('Remove this recurring service?')">×</button>
-              </td>
-            </tr>
-          <% } %>
-        </tbody>
-      </table>
-      </div>
-    <% } else { %>
-      <p class="empty">No recurring services yet. Add hosting, backup, domains or any custom recurring charge below — cost and sell are per unit, ex GST.</p>
-    <% } %>
-    <form method="post" action="/clients/<%= cust.id %>/services" class="stack" style="margin-top:12px">
-      <div class="inline-form wrap">
-        <input name="name" placeholder="Service name (e.g. Website hosting)" required style="flex:2">
-        <input name="quantity" type="number" step="any" min="0.01" value="1" title="Quantity" style="flex:0 1 70px">
-        <input name="cost_price" type="number" step="0.01" min="0" placeholder="Cost ex GST" style="flex:1">
-        <input name="sell_price" type="number" step="0.01" min="0.01" placeholder="Sell ex GST" required style="flex:1">
-      </div>
-      <div class="inline-form wrap">
-        <input name="description" placeholder="Extra invoice line text (optional)" style="flex:2">
-        <select name="months" style="flex:0 1 110px">
-          <option value="1">monthly</option>
-          <option value="12">annual</option>
-        </select>
-        <select name="bill_month" style="flex:0 1 140px" title="Renewal month for annual services">
-          <option value="">renews: —</option>
-          <% for (let m = 1; m <= 12; m++) { %>
-            <option value="<%= m %>">renews: <%= MONTHS[m - 1] %></option>
-          <% } %>
-        </select>
-        <button class="btn">Add service</button>
-      </div>
-    </form>
-  </div>
-</section>
-
-<section class="grid-2">
-  <div class="card">
-    <div class="card-head"><h2>Contacts</h2></div>
-    <% if (contacts.length) { %>
-      <table class="table">
-        <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Primary</th><th></th></tr></thead>
-        <tbody>
-          <% for (const ct of contacts) { %>
-            <tr>
-              <td>
-                <form id="ct-<%= ct.id %>" method="post" action="/clients/<%= cust.id %>/contacts/<%= ct.id %>"></form>
-                <input form="ct-<%= ct.id %>" name="name" value="<%= ct.name %>" required>
-              </td>
-              <td><input form="ct-<%= ct.id %>" name="email" type="email" value="<%= ct.email || '' %>"></td>
-              <td><input form="ct-<%= ct.id %>" name="phone" value="<%= ct.phone || '' %>"></td>
-              <td><input form="ct-<%= ct.id %>" type="checkbox" name="is_primary" <%= ct.is_primary ? 'checked' : '' %> title="Primary contact"></td>
-              <td class="row-actions">
-                <button form="ct-<%= ct.id %>" class="btn btn-ghost btn-sm">Save</button>
-                <button form="ct-<%= ct.id %>" formaction="/clients/<%= cust.id %>/contacts/<%= ct.id %>/delete" class="btn-x" title="Remove contact" onclick="return confirm('Remove this contact?')">×</button>
-              </td>
-            </tr>
-          <% } %>
-        </tbody>
-      </table>
-    <% } else { %>
-      <p class="empty">No contacts. Emails from these addresses are matched to this client's tickets.</p>
-    <% } %>
-    <form method="post" action="/clients/<%= cust.id %>/contacts" class="inline-form wrap" style="margin-top:12px">
-      <input name="name" placeholder="Name" required>
-      <input name="email" type="email" placeholder="Email">
-      <input name="phone" placeholder="Phone">
-      <label class="check"><input type="checkbox" name="is_primary"> Primary</label>
-      <button class="btn">Add contact</button>
-    </form>
-  </div>
-
-  <div class="card">
-    <div class="card-head"><h2>Recent invoices</h2></div>
-    <% if (invoices.length) { %>
-      <table class="table">
-        <thead><tr><th>Invoice date</th><th>Xero invoice</th><th class="num">Total</th><th>Synced</th><th>Payment</th></tr></thead>
-        <tbody>
-          <% for (const i of invoices) { %>
-            <tr>
-              <td class="mono"><%= fmtDate(i.invoice_date || i.created_at) %></td>
-              <td class="mono">
-                <% if (i.xeroUrl) { %>
-                  <a class="link" href="<%= i.xeroUrl %>" target="_blank" rel="noopener"><%= i.xero_number || 'Open in Xero' %></a>
-                <% } else { %>
-                  <%= i.xero_number || i.xero_invoice_id || '—' %>
-                <% } %>
-              </td>
-              <td class="num mono"><%= money(i.total) %></td>
-              <td>
-                <% if (i.synced) { %>
-                  <span class="pill int-ok">synced</span>
-                  <% if (i.status_synced_at) { %><span class="muted mono" style="display:block;font-size:11px;margin-top:2px"><%= fmtDateTimeShort(i.status_synced_at) %></span><% } %>
-                <% } else { %>
-                  <span class="pill int-off">not synced</span>
-                <% } %>
-              </td>
-              <td>
-                <% const st = (i.status || 'draft').toLowerCase(); %>
-                <% if (st === 'paid') { %><span class="pill inv-paid">paid</span>
-                <% } else if (st === 'unpaid' || st === 'authorised' || st === 'submitted') { %>
-                  <span class="pill inv-unpaid">unpaid</span>
-                  <% if (i.amount_due != null && i.amount_due > 0) { %><span class="muted mono" style="display:block;font-size:11px;margin-top:2px"><%= money(i.amount_due) %> due</span><% } %>
-                <% } else if (st === 'draft') { %><span class="pill inv-draft">draft</span>
-                <% } else if (st === 'voided') { %><span class="pill pri-critical">voided</span>
-                <% } else { %><span class="pill int-off"><%= st %></span><% } %>
-              </td>
-            </tr>
-          <% } %>
-        </tbody>
-      </table>
-    <% } else { %>
-      <p class="empty">Nothing invoiced yet. Push lines from the Billing page.</p>
-    <% } %>
-  </div>
-</section>
-
+<!-- ── Contacts ── -->
+<% if (tab === 'contacts') { %>
 <div class="card">
-  <div class="card-head"><h2>Agreement &amp; links</h2></div>
+  <div class="card-head"><h2>Contacts</h2></div>
+  <% if (contacts.length) { %>
+    <table class="table">
+      <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Primary</th><th></th></tr></thead>
+      <tbody>
+        <% for (const ct of contacts) { %>
+          <tr>
+            <td>
+              <form id="ct-<%= ct.id %>" method="post" action="/clients/<%= cust.id %>/contacts/<%= ct.id %>"></form>
+              <input form="ct-<%= ct.id %>" name="name" value="<%= ct.name %>" required>
+            </td>
+            <td><input form="ct-<%= ct.id %>" name="email" type="email" value="<%= ct.email || '' %>"></td>
+            <td><input form="ct-<%= ct.id %>" name="phone" value="<%= ct.phone || '' %>"></td>
+            <td><input form="ct-<%= ct.id %>" type="checkbox" name="is_primary" <%= ct.is_primary ? 'checked' : '' %> title="Primary contact"></td>
+            <td class="row-actions">
+              <button form="ct-<%= ct.id %>" class="btn btn-ghost btn-sm">Save</button>
+              <button form="ct-<%= ct.id %>" formaction="/clients/<%= cust.id %>/contacts/<%= ct.id %>/delete" class="btn-x" title="Remove contact" onclick="return confirm('Remove this contact?')">×</button>
+            </td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  <% } else { %>
+    <p class="empty">No contacts. Emails from these addresses are matched to this client's tickets.</p>
+  <% } %>
+  <form method="post" action="/clients/<%= cust.id %>/contacts" class="inline-form wrap" style="margin-top:12px">
+    <input name="name" placeholder="Name" required>
+    <input name="email" type="email" placeholder="Email">
+    <input name="phone" placeholder="Phone">
+    <label class="check"><input type="checkbox" name="is_primary"> Primary</label>
+    <button class="btn">Add contact</button>
+  </form>
+</div>
+<% } %>
+
+<!-- ── Settings ── -->
+<% if (tab === 'settings') { %>
+<div class="card">
+  <div class="card-head"><h2>Managed service contract</h2></div>
   <form method="post" action="/clients/<%= cust.id %>" class="stack">
     <div class="row-2">
       <label>Name <input name="name" value="<%= cust.name %>" required></label>
       <label>Agreement name <input name="agreement_name" value="<%= cust.agreement_name || '' %>" placeholder="Managed Essentials"></label>
     </div>
     <div class="row-2">
-      <label>Monthly fee (ex GST) <input name="monthly_fee" type="number" step="0.01" min="0" value="<%= cust.monthly_fee || 0 %>"></label>
+      <label>Base fee (ex GST) <input name="monthly_fee" type="number" step="0.01" min="0" value="<%= cust.monthly_fee || 0 %>" title="Flat monthly fee before per-user charges"></label>
+      <label>Per-user fee (ex GST) <input name="per_user_fee" type="number" step="0.01" min="0" value="<%= cust.per_user_fee || 0 %>" title="Charged for each billable user after exclusions"></label>
+    </div>
+    <div class="row-2" id="excluded-user-row">
+      <label>Excluded user count <input name="excluded_users" type="number" min="0" step="1" value="<%= cust.excluded_users ?? cust.included_users ?? 0 %>" title="Flat number to subtract from license seat total"></label>
+      <label>User count source
+        <select name="user_count_source" id="user-count-source">
+          <option value="pax8" <%= (cust.user_count_source || 'pax8') !== 'manual' ? 'selected' : '' %>>Mixed license count (Pax8)</option>
+          <option value="manual" <%= cust.user_count_source === 'manual' ? 'selected' : '' %>>Manual count</option>
+        </select>
+      </label>
+    </div>
+    <label id="manual-user-count" style="<%= cust.user_count_source === 'manual' ? '' : 'display:none' %>">
+      User count
+      <input name="user_count" type="number" min="0" step="1" value="<%= cust.user_count ?? '' %>" placeholder="e.g. 12">
+    </label>
+    <div class="card" style="background:#f8f9fb;padding:14px">
+      <strong>Current billing preview</strong>
+      <p class="muted" style="margin:8px 0 0">
+        <%= userBilling.total %> seat<%= userBilling.total === 1 ? '' : 's' %>
+        <% if (userBilling.excluded > 0) { %> · <%= userBilling.excluded %> excluded<% } %>
+        · <strong><%= userBilling.billable %> billable</strong>
+        <% if (userBilling.perUserFee > 0 && userBilling.billable > 0) { %>
+          · <%= money(userBilling.billable * userBilling.perUserFee) %>/mo per-user
+        <% } %>
+        <% if (userBilling.source === 'pax8' && userBilling.breakdown.length) { %>
+          <span style="display:block;margin-top:6px"><%= userBilling.breakdown.map((b) => `${b.name} (${b.quantity})`).join(', ') %></span>
+        <% } %>
+      </p>
+      <% if (userBilling.source === 'pax8') { %>
+      <p class="muted" style="margin-top:8px;font-size:12px">Choose which license types count below, or set defaults in <a class="link" href="/settings">Settings → Pax8 products</a>.</p>
+      <% } %>
+    </div>
+    <div class="row-2">
       <label>Hourly rate <input name="hourly_rate" type="number" step="0.01" min="0" value="<%= cust.hourly_rate ?? '' %>" placeholder="default <%= defaultRate %>"></label>
+      <span></span>
     </div>
     <div class="row-2">
       <label>Pax8 company
@@ -455,11 +582,182 @@
         <% } %>
       </label>
     </div>
-    <label class="check"><input type="checkbox" name="bill_pax8" <%= cust.bill_pax8 ? 'checked' : '' %>> Bill Pax8 subscriptions</label>
+    <label class="check"><input type="checkbox" name="bill_pax8" <%= cust.bill_pax8 ? 'checked' : '' %>> Bill Pax8 subscriptions (licence pass-through)</label>
     <p class="muted">Unlinked Pax8 companies? <a class="link" href="/clients/import">Import from Pax8 / Xero</a></p>
     <label>Notes <textarea name="notes" rows="3"><%= cust.notes || '' %></textarea></label>
     <div><button class="btn">Save client</button></div>
   </form>
 </div>
+
+<div class="card" id="license-count-card">
+  <div class="card-head">
+    <h2>License types for user count</h2>
+    <% if (licenseProducts.length) { %>
+      <span class="muted"><%= licenseProducts.filter((p) => p.counts).reduce((t, p) => t + p.quantity, 0) %> seats from <%= licenseProducts.filter((p) => p.counts).length %> type<%= licenseProducts.filter((p) => p.counts).length === 1 ? '' : 's' %></span>
+    <% } %>
+  </div>
+  <% if (licenseProducts.length) { %>
+    <form method="post" action="/clients/<%= cust.id %>/license-counts">
+      <p class="muted" style="margin:0 0 10px">Tick license types to include in the mixed seat total (e.g. Premium + Standard). No individual user names — counts come from Pax8 seat quantities.</p>
+      <table class="table">
+        <thead><tr><th>Count</th><th>License</th><th class="num">Seats</th></tr></thead>
+        <tbody>
+          <% for (const p of licenseProducts) { %>
+            <tr>
+              <td><label class="check"><input type="checkbox" name="lic_<%= p.productId %>" <%= p.counts ? 'checked' : '' %>></label></td>
+              <td><%= p.name %></td>
+              <td class="num mono"><%= p.quantity %></td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+      <div class="run-actions"><button class="btn">Save license selection</button></div>
+    </form>
+  <% } else { %>
+    <p class="empty">Link a Pax8 company and sync subscriptions to configure mixed license counts.</p>
+  <% } %>
+</div>
+
+<script>
+(() => {
+  const sel = document.getElementById('user-count-source');
+  const manual = document.getElementById('manual-user-count');
+  const excluded = document.getElementById('excluded-user-row');
+  function refreshSourceUi() {
+    const v = sel?.value || 'pax8';
+    if (manual) manual.style.display = v === 'manual' ? '' : 'none';
+    if (excluded) excluded.style.display = v === 'manual' ? 'none' : '';
+    const lic = document.getElementById('license-count-card');
+    if (lic) lic.style.display = v === 'manual' ? 'none' : '';
+  }
+  sel?.addEventListener('change', refreshSourceUi);
+  refreshSourceUi();
+})();
+</script>
+<% } %>
+
+<% if (cust.active) { %>
+<!-- Add manual line modal -->
+<div class="modal" id="manual-line-modal" hidden>
+  <div class="modal-backdrop" data-close-modal="manual-line"></div>
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="manual-line-title">
+    <div class="modal-head">
+      <h2 id="manual-line-title">Add manual invoice line</h2>
+      <button type="button" class="btn-x" data-close-modal="manual-line" aria-label="Close">×</button>
+    </div>
+    <form method="post" action="/clients/<%= cust.id %>/charges" class="stack">
+      <label>Description
+        <textarea name="description" rows="4" class="desc-input" placeholder="Line text as it should appear on the Xero invoice (multiple lines OK)" required></textarea>
+      </label>
+      <label>Amount (ex GST)
+        <input name="unit_amount" type="number" step="0.01" min="0.01" required>
+      </label>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" data-close-modal="manual-line">Cancel</button>
+        <button type="submit" class="btn">Add line</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Add recurring service modal -->
+<div class="modal" id="recurring-service-modal" hidden>
+  <div class="modal-backdrop" data-close-modal="recurring-service"></div>
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="recurring-service-title">
+    <div class="modal-head">
+      <h2 id="recurring-service-title">Add recurring service</h2>
+      <button type="button" class="btn-x" data-close-modal="recurring-service" aria-label="Close">×</button>
+    </div>
+    <form method="post" action="/clients/<%= cust.id %>/services" class="stack">
+      <label>Service name
+        <input name="name" placeholder="e.g. Website hosting" required>
+      </label>
+      <div class="row-2">
+        <label>Quantity <input name="quantity" type="number" step="any" min="0.01" value="1"></label>
+        <label>Cost (ex GST) <input name="cost_price" type="number" step="0.01" min="0" placeholder="0.00"></label>
+      </div>
+      <label>Sell price (ex GST)
+        <input name="sell_price" type="number" step="0.01" min="0.01" required>
+      </label>
+      <label>Extra invoice line text
+        <input name="description" placeholder="Optional additional description">
+      </label>
+      <div class="row-2">
+        <label>Billing frequency
+          <select name="months">
+            <option value="1">Monthly</option>
+            <option value="12">Annual</option>
+          </select>
+        </label>
+        <label>Renewal month (annual only)
+          <select name="bill_month">
+            <option value="">—</option>
+            <% for (let m = 1; m <= 12; m++) { %>
+              <option value="<%= m %>"><%= MONTHS[m - 1] %></option>
+            <% } %>
+          </select>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" data-close-modal="recurring-service">Cancel</button>
+        <button type="submit" class="btn">Add service</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+(() => {
+  const modals = new Map();
+
+  function registerModal(id, openBtnId) {
+    const modal = document.getElementById(id);
+    if (!modal) return;
+    modals.set(id, modal);
+    const openBtn = openBtnId ? document.getElementById(openBtnId) : null;
+    const focusSelector = modal.dataset.focus;
+
+    function openModal() {
+      modal.hidden = false;
+      document.body.classList.add('modal-open');
+      const focusEl = focusSelector ? modal.querySelector(focusSelector) : modal.querySelector('textarea, input, select, button');
+      focusEl?.focus();
+    }
+
+    function closeModal() {
+      modal.hidden = true;
+      if ([...modals.values()].every((m) => m.hidden)) {
+        document.body.classList.remove('modal-open');
+      }
+    }
+
+    openBtn?.addEventListener('click', openModal);
+    modal.querySelectorAll(`[data-close-modal="${id.replace('-modal', '')}"]`).forEach((el) => {
+      el.addEventListener('click', closeModal);
+    });
+    modal._close = closeModal;
+    modal._open = openModal;
+  }
+
+  registerModal('manual-line-modal', 'open-manual-line');
+  registerModal('recurring-service-modal', 'open-recurring-service');
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    for (const modal of modals.values()) {
+      if (!modal.hidden) {
+        modal._close?.();
+        break;
+      }
+    }
+  });
+
+  const params = new URLSearchParams(window.location.search);
+  const open = params.get('open');
+  if (open === 'manual') document.getElementById('manual-line-modal')?._open?.();
+  if (open === 'recurring') document.getElementById('recurring-service-modal')?._open?.();
+})();
+</script>
+<% } %>
 
 <%- include('partials/foot') %>

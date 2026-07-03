@@ -130,14 +130,14 @@
 <div class="card">
   <div class="card-head">
     <h2>Pax8 product pricing</h2>
-    <span class="muted">Blank sell = Pax8 RRP from sync; override here if needed</span>
+    <span class="muted">Blank sell = Pax8 RRP from sync. Uncheck “User” to exclude a license from managed-service user counts.</span>
   </div>
   <% if (!products.length) { %>
     <p class="empty">No products yet — run a Pax8 sync first.</p>
   <% } else { %>
     <form method="post" action="/settings/products">
       <table class="table">
-        <thead><tr><th>Product</th><th>Vendor</th><th class="num">Seats</th><th class="num">Buy</th><th class="num">Sell (override)</th><th class="num">Effective</th></tr></thead>
+        <thead><tr><th>Product</th><th>Vendor</th><th class="num">Seats</th><th>User</th><th class="num">Buy</th><th class="num">Sell (override)</th><th class="num">Effective</th></tr></thead>
         <tbody>
           <% for (const p of products) {
                const eff = p.sell_price != null ? p.sell_price : (p.buy_price || 0) * (1 + markupPct / 100); %>
@@ -145,6 +145,7 @@
               <td><%= p.name || p.id %></td>
               <td class="muted"><%= p.vendor || '—' %></td>
               <td class="num mono"><%= p.seats %></td>
+              <td><label class="check" title="Counts toward managed-service user total"><input type="checkbox" name="user_<%= p.id %>" <%= p.counts_as_user ? 'checked' : '' %>></label></td>
               <td class="num mono"><%= money(p.buy_price || 0) %></td>
               <td class="num"><input class="cell-input" name="sell_<%= p.id %>" type="number" step="0.01" min="0" value="<%= p.sell_price ?? '' %>" placeholder="auto"></td>
               <td class="num mono accent"><%= money(eff) %></td>
@@ -152,7 +153,7 @@
           <% } %>
         </tbody>
       </table>
-      <div class="run-actions"><button class="btn">Save sell prices</button></div>
+      <div class="run-actions"><button class="btn">Save product settings</button></div>
     </form>
   <% } %>
 </div>

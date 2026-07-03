@@ -2,10 +2,24 @@ import { Router } from 'express';
 import { db, getNumberSetting } from '../db.js';
 import { sellPrice, listCachedCompanies, unlinkedPax8Companies } from '../integrations/pax8.js';
 import { listContacts, getContact, syncLocalInvoices, xeroConnected } from '../integrations/xero.js';
-import { buildRun, billableMinutes, subBillingInfo, subProrataQuote, mrrByClient } from '../billing.js';
+import { buildRun, billableMinutes, subBillingInfo, subProrataQuote, mrrByClient, computeUserBilling, clientLicenseProducts } from '../billing.js';
 import { fmtDate, todayIsoInTz } from '../dates.js';
 
 const r = Router();
+
+const CLIENT_TABS = new Set(['overview', 'billing', 'time', 'contacts', 'settings']);
+
+function clientTab(req) {
+  const t = String(req.query.tab || 'overview');
+  return CLIENT_TABS.has(t) ? t : 'overview';
+}
+
+function clientUrl(id, tab, extra = '') {
+  const parts = [];
+  if (tab && tab !== 'overview') parts.push(`tab=${tab}`);
+  if (extra) parts.push(extra);
+  return `/clients/${id}${parts.length ? `?${parts.join('&')}` : ''}`;
+}
 
 function linkPax8Subscriptions(clientId, pax8CompanyId) {
   if (!pax8CompanyId) return;
@@ -173,8 +187,9 @@ r.get('/:id', async (req, res) => {
 
   const services = db.prepare('SELECT * FROM recurring_services WHERE client_id = ? ORDER BY name').all(client.id);
 
-  // MRR = agreement fee + recurring services + active Pax8 subs, all at monthly-equivalent sell price
-  const mrr = (client.monthly_fee || 0)
+  // MRR = agreement (base + per-user) + recurring services + active Pax8 subs
+  const userBilling = computeUserBilling(client);
+  const mrr = (client.monthly_fee || 0) + userBilling.billable * userBilling.perUserFee
     + services.filter((s) => s.active).reduce((t, s) => t + (s.quantity * s.sell_price) / (s.months || 1), 0)
     + (client.bill_pax8
       ? subs.filter((s) => s.status === 'Active' && s.quantity > 0)
@@ -213,27 +228,63 @@ r.get('/:id', async (req, res) => {
     WHERE client_id = ? AND invoiced_at IS NULL
     ORDER BY created_at DESC
   `).all(client.id);
+  const licenseProducts = clientLicenseProducts(client.id);
   res.render('client', {
     title: client.name,
     cust: client, contacts, tickets, subs, services, invoices, manualCharges, prorata,
     pax8Companies, xeroContacts,
     timeEntries, unbilledMinutes, unbilledValue, mrr, nextInvoice, activity,
     openTickets, openTicketOptions, period,
-    defaultRate
+    defaultRate,
+    tab: clientTab(req),
+    userBilling,
+    licenseProducts
   });
 });
 
+function parseUserCountSource(raw) {
+  return raw === 'manual' ? 'manual' : 'pax8';
+}
+
+r.post('/:id/license-counts', (req, res) => {
+  const client = db.prepare('SELECT id FROM clients WHERE id = ?').get(req.params.id);
+  if (!client) return res.status(404).send('Client not found');
+  const products = clientLicenseProducts(client.id);
+  const upsert = db.prepare(`
+    INSERT INTO client_license_count (client_id, product_id, counts_as_user)
+    VALUES (?, ?, ?)
+    ON CONFLICT(client_id, product_id) DO UPDATE SET counts_as_user = excluded.counts_as_user
+  `);
+  const tx = db.transaction(() => {
+    for (const p of products) {
+      upsert.run(client.id, p.productId, req.body[`lic_${p.productId}`] ? 1 : 0);
+    }
+  });
+  tx();
+  res.redirect(clientUrl(req.params.id, 'settings', 'flash=License counts saved'));
+});
+
 r.post('/:id', async (req, res) => {
-  const { name, agreement_name, monthly_fee, hourly_rate, bill_pax8, notes, pax8_company_id, xero_contact_id } = req.body;
+  const {
+    name, agreement_name, monthly_fee, per_user_fee, excluded_users,
+    user_count_source, user_count, hourly_rate, bill_pax8, notes,
+    pax8_company_id, xero_contact_id
+  } = req.body;
+  const source = parseUserCountSource(user_count_source);
   const prev = db.prepare('SELECT xero_contact_id FROM clients WHERE id = ?').get(req.params.id);
   db.prepare(`
-    UPDATE clients SET name = ?, agreement_name = ?, monthly_fee = ?, hourly_rate = ?,
-      bill_pax8 = ?, notes = ?, pax8_company_id = ?, xero_contact_id = ?
+    UPDATE clients SET name = ?, agreement_name = ?, monthly_fee = ?, per_user_fee = ?,
+      excluded_users = ?, user_count_source = ?, user_count = ?,
+      hourly_rate = ?, bill_pax8 = ?, notes = ?, pax8_company_id = ?, xero_contact_id = ?
     WHERE id = ?
   `).run(
     name.trim(),
     agreement_name || null,
     Number(monthly_fee) || 0,
+    Number(per_user_fee) || 0,
+    Math.max(0, Number(excluded_users) || 0),
+    source,
+    source === 'manual' && user_count !== '' ? Math.max(0, Number(user_count) || 0) : null,
     hourly_rate ? Number(hourly_rate) : null,
     bill_pax8 ? 1 : 0,
     notes || null,
@@ -248,7 +299,7 @@ r.post('/:id', async (req, res) => {
       upsertPrimaryContact(req.params.id, xc.name, xc.email, xc.phone);
     } catch { /* client saved; contact sync optional */ }
   }
-  res.redirect(`/clients/${req.params.id}?flash=Client saved`);
+  res.redirect(clientUrl(req.params.id, 'settings', 'flash=Client saved'));
 });
 
 r.post('/:id/archive', (req, res) => {
@@ -258,7 +309,7 @@ r.post('/:id/archive', (req, res) => {
 
 r.post('/:id/restore', (req, res) => {
   db.prepare('UPDATE clients SET active = 1 WHERE id = ?').run(req.params.id);
-  res.redirect(`/clients/${req.params.id}?flash=Client restored`);
+  res.redirect(clientUrl(req.params.id, 'overview', 'flash=Client restored'));
 });
 
 r.post('/:id/contacts', (req, res) => {
@@ -267,28 +318,28 @@ r.post('/:id/contacts', (req, res) => {
     db.prepare('INSERT INTO contacts (client_id, name, email, phone, is_primary) VALUES (?, ?, ?, ?, ?)')
       .run(req.params.id, name.trim(), email || null, phone || null, is_primary ? 1 : 0);
   }
-  res.redirect(`/clients/${req.params.id}?flash=Contact added`);
+  res.redirect(clientUrl(req.params.id, 'contacts', 'flash=Contact added'));
 });
 
 r.post('/:id/contacts/:contactId/delete', (req, res) => {
   db.prepare('DELETE FROM contacts WHERE id = ? AND client_id = ?').run(req.params.contactId, req.params.id);
-  res.redirect(`/clients/${req.params.id}?flash=Contact removed`);
+  res.redirect(clientUrl(req.params.id, 'contacts', 'flash=Contact removed'));
 });
 
 r.post('/:id/contacts/:contactId', (req, res) => {
   const { name, email, phone, is_primary } = req.body;
-  if (!name?.trim()) return res.redirect(`/clients/${req.params.id}?flash=Contact name is required&kind=err`);
+  if (!name?.trim()) return res.redirect(clientUrl(req.params.id, 'contacts', 'flash=Contact name is required&kind=err'));
   if (is_primary) {
     db.prepare('UPDATE contacts SET is_primary = 0 WHERE client_id = ?').run(req.params.id);
   }
   db.prepare('UPDATE contacts SET name = ?, email = ?, phone = ?, is_primary = ? WHERE id = ? AND client_id = ?')
     .run(name.trim(), email || null, phone || null, is_primary ? 1 : 0, req.params.contactId, req.params.id);
-  res.redirect(`/clients/${req.params.id}?flash=Contact saved`);
+  res.redirect(clientUrl(req.params.id, 'contacts', 'flash=Contact saved'));
 });
 
 r.post('/:id/time', (req, res) => {
   const mins = Number(req.body.minutes);
-  if (!mins || mins <= 0) return res.redirect(`/clients/${req.params.id}?flash=Minutes must be a positive number&kind=err`);
+  if (!mins || mins <= 0) return res.redirect(clientUrl(req.params.id, 'time', 'flash=Minutes must be a positive number&kind=err'));
   const ticketId = req.body.ticket_id
     ? db.prepare('SELECT id FROM tickets WHERE id = ? AND client_id = ?').get(req.body.ticket_id, req.params.id)?.id ?? null
     : null;
@@ -296,25 +347,25 @@ r.post('/:id/time', (req, res) => {
     'INSERT INTO time_entries (ticket_id, client_id, minutes, description, billable) VALUES (?, ?, ?, ?, ?)'
   ).run(ticketId, req.params.id, mins, req.body.description?.trim() || null, req.body.billable ? 1 : 0);
   if (ticketId) db.prepare("UPDATE tickets SET updated_at = datetime('now') WHERE id = ?").run(ticketId);
-  res.redirect(`/clients/${req.params.id}?flash=Time logged`);
+  res.redirect(clientUrl(req.params.id, 'time', 'flash=Time logged'));
 });
 
 r.post('/:id/time/:entryId', (req, res) => {
   const entry = db.prepare(
     'SELECT id FROM time_entries WHERE id = ? AND client_id = ? AND invoiced_at IS NULL'
   ).get(req.params.entryId, req.params.id);
-  if (!entry) return res.redirect(`/clients/${req.params.id}?flash=Time entry not found or already invoiced&kind=err`);
+  if (!entry) return res.redirect(clientUrl(req.params.id, 'time', 'flash=Time entry not found or already invoiced&kind=err'));
   const mins = Number(req.body.minutes);
-  if (!mins || mins <= 0) return res.redirect(`/clients/${req.params.id}?flash=Minutes must be a positive number&kind=err`);
+  if (!mins || mins <= 0) return res.redirect(clientUrl(req.params.id, 'time', 'flash=Minutes must be a positive number&kind=err'));
   db.prepare('UPDATE time_entries SET minutes = ?, description = ?, billable = ? WHERE id = ?')
     .run(mins, String(req.body.description || '').trim() || null, req.body.billable ? 1 : 0, entry.id);
-  res.redirect(`/clients/${req.params.id}?flash=Time entry saved`);
+  res.redirect(clientUrl(req.params.id, 'time', 'flash=Time entry saved'));
 });
 
 r.post('/:id/time/:entryId/delete', (req, res) => {
   db.prepare('DELETE FROM time_entries WHERE id = ? AND client_id = ? AND invoiced_at IS NULL')
     .run(req.params.entryId, req.params.id);
-  res.redirect(`/clients/${req.params.id}?flash=Time entry removed`);
+  res.redirect(clientUrl(req.params.id, 'time', 'flash=Time entry removed'));
 });
 
 function parseServiceBody(body) {
@@ -341,34 +392,34 @@ function serviceError(svc) {
 r.post('/:id/services', (req, res) => {
   const svc = parseServiceBody(req.body);
   const err = serviceError(svc);
-  if (err) return res.redirect(`/clients/${req.params.id}?flash=${encodeURIComponent(err)}&kind=err`);
+  if (err) return res.redirect(clientUrl(req.params.id, 'billing', `flash=${encodeURIComponent(err)}&kind=err&open=recurring`));
   db.prepare(`
     INSERT INTO recurring_services (client_id, name, description, quantity, cost_price, sell_price, months, bill_month)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(req.params.id, svc.name, svc.description, svc.quantity, svc.cost_price, svc.sell_price, svc.months, svc.bill_month);
-  res.redirect(`/clients/${req.params.id}?flash=Recurring service added`);
+  res.redirect(clientUrl(req.params.id, 'billing', 'flash=Recurring service added'));
 });
 
 r.post('/:id/services/:serviceId', (req, res) => {
   const row = db.prepare('SELECT id FROM recurring_services WHERE id = ? AND client_id = ?')
     .get(req.params.serviceId, req.params.id);
-  if (!row) return res.redirect(`/clients/${req.params.id}?flash=Service not found&kind=err`);
+  if (!row) return res.redirect(clientUrl(req.params.id, 'billing', 'flash=Service not found&kind=err'));
   const svc = parseServiceBody(req.body);
   const err = serviceError(svc);
-  if (err) return res.redirect(`/clients/${req.params.id}?flash=${encodeURIComponent(err)}&kind=err`);
+  if (err) return res.redirect(clientUrl(req.params.id, 'billing', `flash=${encodeURIComponent(err)}&kind=err`));
   db.prepare(`
     UPDATE recurring_services
     SET name = ?, description = ?, quantity = ?, cost_price = ?, sell_price = ?, months = ?, bill_month = ?, active = ?
     WHERE id = ?
   `).run(svc.name, svc.description, svc.quantity, svc.cost_price, svc.sell_price, svc.months, svc.bill_month,
     req.body.active ? 1 : 0, row.id);
-  res.redirect(`/clients/${req.params.id}?flash=Recurring service saved`);
+  res.redirect(clientUrl(req.params.id, 'billing', 'flash=Recurring service saved'));
 });
 
 r.post('/:id/services/:serviceId/delete', (req, res) => {
   db.prepare('DELETE FROM recurring_services WHERE id = ? AND client_id = ?')
     .run(req.params.serviceId, req.params.id);
-  res.redirect(`/clients/${req.params.id}?flash=Recurring service removed`);
+  res.redirect(clientUrl(req.params.id, 'billing', 'flash=Recurring service removed'));
 });
 
 // One-click pro-rata: bill the remainder of an annual/multi-year term (to its end date)
@@ -379,13 +430,13 @@ r.post('/:id/subs/:subId/prorata', (req, res) => {
     FROM pax8_subscriptions s LEFT JOIN pax8_products p ON p.id = s.product_id
     WHERE s.id = ? AND s.client_id = ?
   `).get(req.params.subId, req.params.id);
-  if (!sub) return res.redirect(`/clients/${req.params.id}?flash=Subscription not found&kind=err`);
+  if (!sub) return res.redirect(clientUrl(req.params.id, 'billing', 'flash=Subscription not found&kind=err'));
   const sell = sellPrice({ sell_price: sub.p_sell, buy_price: sub.p_buy ?? sub.buy_price });
   const quote = subProrataQuote(sub, sell);
   if (!quote) {
-    return res.redirect(`/clients/${req.params.id}?flash=${encodeURIComponent(
+    return res.redirect(clientUrl(req.params.id, 'billing', `flash=${encodeURIComponent(
       'No pro-rata to bill — the subscription has no future end date. Run a Pax8 sync from Settings.'
-    )}&kind=err`);
+    )}&kind=err`));
   }
   const today = todayIsoInTz();
   const description = `${sub.product_name || sub.product_id} — pro-rata ${fmtDate(today)} → ${fmtDate(sub.end_date)}\n`
@@ -393,20 +444,20 @@ r.post('/:id/subs/:subId/prorata', (req, res) => {
   db.prepare(
     'INSERT INTO manual_charges (client_id, description, quantity, unit_amount) VALUES (?, ?, 1, ?)'
   ).run(req.params.id, description, quote.amount);
-  res.redirect(`/clients/${req.params.id}?flash=${encodeURIComponent(
+  res.redirect(clientUrl(req.params.id, 'billing', `flash=${encodeURIComponent(
     `Pro-rata line added (A$${quote.amount.toFixed(2)}) — review under Manual invoice lines`
-  )}`);
+  )}`));
 });
 
 r.post('/:id/charges', (req, res) => {
   const description = String(req.body.description || '').trim();
   const amount = Number(req.body.unit_amount);
-  if (!description) return res.redirect(`/clients/${req.params.id}?flash=Description is required&kind=err`);
-  if (!amount || amount <= 0) return res.redirect(`/clients/${req.params.id}?flash=Amount must be positive&kind=err`);
+  if (!description) return res.redirect(clientUrl(req.params.id, 'billing', 'flash=Description is required&kind=err&open=manual'));
+  if (!amount || amount <= 0) return res.redirect(clientUrl(req.params.id, 'billing', 'flash=Amount must be positive&kind=err&open=manual'));
   db.prepare(
     'INSERT INTO manual_charges (client_id, description, quantity, unit_amount) VALUES (?, ?, 1, ?)'
   ).run(req.params.id, description, amount);
-  res.redirect(`/clients/${req.params.id}?flash=Manual line added`);
+  res.redirect(clientUrl(req.params.id, 'billing', 'flash=Manual line added'));
 });
 
 r.post('/:id/charges/:chargeId', (req, res) => {
@@ -415,19 +466,19 @@ r.post('/:id/charges/:chargeId', (req, res) => {
   const row = db.prepare(
     'SELECT id FROM manual_charges WHERE id = ? AND client_id = ? AND invoiced_at IS NULL'
   ).get(req.params.chargeId, req.params.id);
-  if (!row) return res.redirect(`/clients/${req.params.id}?flash=Line not found or already invoiced&kind=err`);
-  if (!description) return res.redirect(`/clients/${req.params.id}?flash=Description is required&kind=err`);
-  if (!amount || amount <= 0) return res.redirect(`/clients/${req.params.id}?flash=Amount must be positive&kind=err`);
+  if (!row) return res.redirect(clientUrl(req.params.id, 'billing', 'flash=Line not found or already invoiced&kind=err'));
+  if (!description) return res.redirect(clientUrl(req.params.id, 'billing', 'flash=Description is required&kind=err'));
+  if (!amount || amount <= 0) return res.redirect(clientUrl(req.params.id, 'billing', 'flash=Amount must be positive&kind=err'));
   db.prepare('UPDATE manual_charges SET description = ?, unit_amount = ? WHERE id = ?')
     .run(description, amount, req.params.chargeId);
-  res.redirect(`/clients/${req.params.id}?flash=Manual line saved`);
+  res.redirect(clientUrl(req.params.id, 'billing', 'flash=Manual line saved'));
 });
 
 r.post('/:id/charges/:chargeId/delete', (req, res) => {
   db.prepare(
     'DELETE FROM manual_charges WHERE id = ? AND client_id = ? AND invoiced_at IS NULL'
   ).run(req.params.chargeId, req.params.id);
-  res.redirect(`/clients/${req.params.id}?flash=Manual line removed`);
+  res.redirect(clientUrl(req.params.id, 'billing', 'flash=Manual line removed'));
 });
 
 export default r;

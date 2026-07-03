@@ -2,6 +2,28 @@
 // Read-only: subscriptions become invoice lines at your sell price.
 import { db, getNumberSetting } from '../db.js';
 
+// Guess whether a Pax8 product represents a billable M365 user seat.
+export function defaultCountsAsUser(name = '', vendor = '') {
+  const n = String(name).toLowerCase();
+  const v = String(vendor).toLowerCase();
+  if (!n.includes('microsoft') && !n.includes('office 365') && !n.includes('m365') && v !== 'microsoft') {
+    return 0;
+  }
+  const exclude = [
+    'defender', 'azure', 'backup', 'acronis', 'teams phone', 'teams rooms', 'teams premium',
+    'sharepoint plan', 'exchange online plan', 'exchange online (', 'visio', 'project ',
+    'planner', 'power bi', 'copilot', 'windows ', 'intune plan', 'audio conferencing',
+    'cloud app security', 'purview', 'entra', 'identity'
+  ];
+  if (exclude.some((p) => n.includes(p))) return 0;
+  const include = [
+    'business premium', 'business standard', 'business basic', 'business essentials',
+    'microsoft 365 e', 'office 365 e', 'microsoft 365 f', 'microsoft 365 apps',
+    'office 365 business', 'microsoft 365 business'
+  ];
+  return include.some((p) => n.includes(p)) ? 1 : 0;
+}
+
 const TOKEN_URL = 'https://api.pax8.com/v1/token';
 const API = 'https://api.pax8.com/v1';
 const API_V2 = 'https://api.pax8.com/v2';
@@ -260,11 +282,12 @@ export async function syncSubscriptions() {
 
   const clientByCompany = db.prepare('SELECT id FROM clients WHERE pax8_company_id = ?');
   const upsertProduct = db.prepare(`
-    INSERT INTO pax8_products (id, name, vendor, buy_price, sell_price)
-    VALUES (@id, @name, @vendor, @buy_price, @sell_price)
+    INSERT INTO pax8_products (id, name, vendor, buy_price, sell_price, counts_as_user)
+    VALUES (@id, @name, @vendor, @buy_price, @sell_price, @counts_as_user)
     ON CONFLICT(id) DO UPDATE SET name = excluded.name, vendor = excluded.vendor,
       buy_price = COALESCE(excluded.buy_price, pax8_products.buy_price),
-      sell_price = COALESCE(pax8_products.sell_price, excluded.sell_price)
+      sell_price = COALESCE(pax8_products.sell_price, excluded.sell_price),
+      counts_as_user = COALESCE(pax8_products.counts_as_user, excluded.counts_as_user)
   `);
   const upsertSub = db.prepare(`
     INSERT INTO pax8_subscriptions (
@@ -305,7 +328,14 @@ export async function syncSubscriptions() {
       const sell = s.price ?? rates?.sell ?? null;
       const buy = rates?.buy ?? null;
 
-      upsertProduct.run({ id: productId, name: meta.name, vendor: meta.vendor, buy_price: buy, sell_price: sell });
+      upsertProduct.run({
+        id: productId,
+        name: meta.name,
+        vendor: meta.vendor,
+        buy_price: buy,
+        sell_price: sell,
+        counts_as_user: defaultCountsAsUser(meta.name, meta.vendor)
+      });
 
       const client = clientByCompany.get(company.id);
       // Commitment term shape varies across Pax8 API versions: string or { term }

@@ -19,6 +19,13 @@ const EDITABLE = [
 
 r.get('/', (req, res) => {
   const values = Object.fromEntries(EDITABLE.map((k) => [k, getSetting(k, '')]));
+  const unset = db.prepare('SELECT id, name, vendor FROM pax8_products WHERE counts_as_user IS NULL').all();
+  if (unset.length) {
+    const setCount = db.prepare('UPDATE pax8_products SET counts_as_user = ? WHERE id = ?');
+    for (const p of unset) {
+      setCount.run(pax8.defaultCountsAsUser(p.name, p.vendor), p.id);
+    }
+  }
   const products = db.prepare(`
     SELECT p.*, COALESCE(SUM(s.quantity), 0) AS seats
     FROM pax8_products p LEFT JOIN pax8_subscriptions s ON s.product_id = p.id AND s.status = 'Active'
@@ -61,19 +68,24 @@ r.post('/', (req, res) => {
   res.redirect('/settings?flash=Settings saved — timezone and schedule changes apply to new times immediately; cron schedules apply after a restart');
 });
 
-// Per-product sell prices (blank = auto markup)
+// Per-product sell prices and user-count flags
 r.post('/products', (req, res) => {
-  const update = db.prepare('UPDATE pax8_products SET sell_price = ? WHERE id = ?');
+  const updateSell = db.prepare('UPDATE pax8_products SET sell_price = ? WHERE id = ?');
+  const updateUser = db.prepare('UPDATE pax8_products SET counts_as_user = ? WHERE id = ?');
+  const allProducts = db.prepare('SELECT id FROM pax8_products').all();
   const tx = db.transaction(() => {
+    for (const { id } of allProducts) {
+      updateUser.run(req.body[`user_${id}`] ? 1 : 0, id);
+    }
     for (const [key, val] of Object.entries(req.body)) {
       if (!key.startsWith('sell_')) continue;
       const id = key.slice(5);
       const price = String(val).trim() === '' ? null : Number(val);
-      if (price == null || (!Number.isNaN(price) && price >= 0)) update.run(price, id);
+      if (price == null || (!Number.isNaN(price) && price >= 0)) updateSell.run(price, id);
     }
   });
   tx();
-  res.redirect('/settings?flash=Sell prices saved');
+  res.redirect('/settings?flash=Product settings saved');
 });
 
 export default r;
