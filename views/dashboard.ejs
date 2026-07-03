@@ -1,0 +1,108 @@
+<%- include('partials/head') %>
+
+<header class="page-head">
+  <h1>Dashboard</h1>
+  <div class="inline-form">
+    <a class="btn btn-ghost" href="/tickets">Tickets</a>
+    <a class="btn" href="/billing">Billing run →</a>
+  </div>
+</header>
+
+<section class="stat-row">
+  <div class="stat"><span class="stat-n"><%= counts.open %></span><span class="stat-l">Open</span></div>
+  <div class="stat"><span class="stat-n"><%= counts.in_progress %></span><span class="stat-l">In progress</span></div>
+  <div class="stat"><span class="stat-n"><%= counts.waiting %></span><span class="stat-l">Waiting on client</span></div>
+  <div class="stat"><span class="stat-n"><%= counts.stale %></span><span class="stat-l">Stale (7d+)</span></div>
+  <div class="stat">
+    <span class="stat-n"><%= (counts.unbilled_minutes / 60).toFixed(1) %>h</span>
+    <span class="stat-l">Unbilled time · ≈<%= money(unbilledValueApprox) %></span>
+  </div>
+  <div class="stat"><span class="stat-n"><%= money(mrrTotal) %></span><span class="stat-l">Monthly recurring</span></div>
+</section>
+
+<% if (followUpTickets.length) { %>
+<section class="card" style="margin-bottom:16px">
+  <div class="card-head"><h2>Follow-ups due</h2><a class="link" href="/tickets?status=active">All tickets →</a></div>
+  <table class="table">
+    <thead><tr><th>Ref</th><th>Subject</th><th>Client</th><th>Due</th><th>Status</th></tr></thead>
+    <tbody>
+      <% for (const t of followUpTickets) { %>
+        <tr>
+          <td class="mono"><a class="link" href="/tickets/<%= t.id %>"><%= ticketRef(t) %></a></td>
+          <td><%= t.subject %></td>
+          <td><%= t.client_name || '—' %></td>
+          <td class="mono <%= isDateBeforeToday(t.follow_up_at) ? 'accent' : '' %>"><%= String(t.follow_up_at).length > 10 ? fmtDateTimeShort(t.follow_up_at) : fmtDate(t.follow_up_at) %></td>
+          <td><span class="pill st-<%= t.status %>"><%= t.status.replace('_', ' ') %></span></td>
+        </tr>
+      <% } %>
+    </tbody>
+  </table>
+</section>
+<% } %>
+
+<section class="grid-thread">
+  <div class="card">
+    <div class="card-head"><h2>Work queue</h2><a class="link" href="/tickets">All tickets →</a></div>
+    <% if (!openTickets.length) { %>
+      <p class="empty">No open tickets. Log one from the Tickets page or wait for the mailbox poller.</p>
+    <% } else { %>
+      <table class="table">
+        <thead><tr><th>Ref</th><th>Subject</th><th>Client</th><th>Priority</th><th>Status</th></tr></thead>
+        <tbody>
+          <% for (const t of openTickets) { %>
+            <tr>
+              <td class="mono"><a class="link" href="/tickets/<%= t.id %>"><%= ticketRef(t) %></a></td>
+              <td><%= t.subject %></td>
+              <td><%= t.client_name || '—' %></td>
+              <td><span class="pill pri-<%= t.priority %>"><%= t.priority %></span></td>
+              <td><span class="pill st-<%= t.status %>"><%= t.status.replace('_', ' ') %></span></td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+    <% } %>
+  </div>
+
+  <div class="side-stack">
+    <div class="card">
+      <div class="card-head"><h2>This month</h2><a class="link" href="/billing">Billing →</a></div>
+      <ul class="int-list">
+        <li>
+          <span class="int-name">Ready to bill (<%= period %>)</span>
+          <span class="mono accent"><%= money(readyToBill) %></span>
+        </li>
+        <li>
+          <span class="int-name">Outstanding</span>
+          <span class="mono"><%= money(outstanding.due) %><% if (outstanding.n) { %> <span class="muted">· <%= outstanding.n %> unpaid</span><% } %></span>
+        </li>
+        <li>
+          <span class="int-name">Active clients</span>
+          <span class="mono"><%= counts.clients %></span>
+        </li>
+        <li>
+          <span class="int-name">Avg days to close</span>
+          <span class="mono"><%= ticketStats.avg_close_days != null ? ticketStats.avg_close_days + 'd' : '—' %></span>
+        </li>
+      </ul>
+      <% if (billingAttention > 0) { %>
+        <p class="muted" style="margin-top:10px">
+          <span class="pill pri-critical"><%= billingAttention %></span>
+          recurring service(s) need a renewal month — <a class="link" href="/billing">review</a>
+        </p>
+      <% } %>
+    </div>
+
+    <% if (openByClient.length) { %>
+      <div class="card">
+        <div class="card-head"><h2>Open by client</h2></div>
+        <ul class="int-list">
+          <% for (const row of openByClient) { %>
+            <li><span class="int-name"><%= row.name %></span><span class="mono"><%= row.n %></span></li>
+          <% } %>
+        </ul>
+      </div>
+    <% } %>
+  </div>
+</section>
+
+<%- include('partials/foot') %>

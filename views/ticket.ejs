@@ -1,0 +1,420 @@
+<%- include('partials/head') %>
+
+<header class="page-head">
+  <h1>
+    <span class="mono accent"><%= ticketRef(ticket) %></span> <%= ticket.subject %>
+    <% if (isStale) { %><span class="pill st-stale">stale</span><% } %>
+    <% if (ticket.client_id && !billingResolved && ticket.status !== 'closed') { %>
+      <span class="pill pri-high">billing pending</span>
+    <% } %>
+  </h1>
+  <div class="inline-form">
+    <a class="btn btn-ghost" href="/tickets">← Tickets</a>
+  </div>
+</header>
+
+<div class="page-actions">
+  <% if (ticket.status !== 'closed') { %>
+    <% if (ticket.client_id) { %>
+      <button type="button" class="btn btn-ghost" id="open-log-time">Log time</button>
+    <% } else { %>
+      <button type="button" class="btn btn-ghost" disabled title="Assign a client to log time">Log time</button>
+    <% } %>
+    <button type="button" class="btn" id="open-close-ticket">Close ticket</button>
+  <% } %>
+  <% if (mergeCandidates.length) { %>
+    <button type="button" class="btn btn-ghost" id="open-merge-ticket">Merge ticket</button>
+  <% } %>
+</div>
+
+<section class="grid-thread ticket-layout">
+  <div class="ticket-main">
+    <% if (mailReady && ticket.status !== 'closed') { %>
+    <link href="https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.snow.css" rel="stylesheet">
+    <div class="card reply-composer">
+      <div class="card-head">
+        <h2>Reply</h2>
+        <span class="muted mono">[<%= ticketRef(ticket) %>] threading</span>
+      </div>
+      <form method="post" action="/tickets/<%= ticket.id %>/reply" class="stack" enctype="multipart/form-data" data-rte novalidate>
+        <div class="row-2">
+          <label>Reply to <input name="to" type="email" value="<%= replyTo %>" required></label>
+          <label>CC <input name="cc" type="text" placeholder="a@x.com, b@y.com"></label>
+        </div>
+        <label>BCC <input name="bcc" type="text" placeholder="Optional hidden copy"></label>
+        <label class="rte-label">Message
+          <div data-rte-mount data-placeholder="Write your reply…"></div>
+          <input type="hidden" name="body" data-rte-input>
+        </label>
+        <label>Attachments
+          <input type="file" name="attachments" data-rte-files multiple accept="*/*">
+        </label>
+        <ul class="rte-file-list" data-rte-file-list></ul>
+        <p class="muted">Up to 10 files, 15 MB each. Formatting is sent as HTML email.</p>
+        <div class="reply-composer-actions">
+          <button type="submit" class="btn">Send reply</button>
+        </div>
+      </form>
+    </div>
+    <% } else if (!mailReady && ticket.status !== 'closed') { %>
+    <p class="empty card">Email replies need M365 credentials in <span class="mono">.env</span>. Notes still work below.</p>
+    <% } %>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Thread</h2>
+        <span class="muted mono"><%= ticket.source %> · created <%= fmtDateTime(ticket.created_at) %><% if (lastActivity) { %> · last activity <%= fmtDateTime(lastActivity) %><% } %></span>
+      </div>
+
+      <div class="thread">
+        <% if (!messages.length) { %><p class="empty">No messages yet.</p><% } %>
+        <% for (const m of messages.slice().reverse()) { %>
+        <div class="msg msg-<%= m.direction %>">
+          <div class="msg-meta mono">
+            <%= m.direction === 'in' ? (m.author || 'client') : m.direction === 'out' ? 'you → client' : m.author === 'system' ? 'system' : 'internal note' %>
+            · <%= fmtDateTime(m.created_at) %>
+            <% if (m.direction === 'out' && (m.cc || m.bcc)) { %>
+              · to <%= m.cc ? 'cc ' + m.cc : '' %><%= m.cc && m.bcc ? ' · ' : '' %><%= m.bcc ? 'bcc ' + m.bcc : '' %>
+            <% } %>
+          </div>
+          <% if (m.body_html) { %>
+            <div class="msg-body msg-body-html"><%- sanitizeHtml(m.body_html) %></div>
+          <% } else { %>
+            <div class="msg-body"><%= m.body %></div>
+          <% } %>
+          <% if (attachmentsByMessage[m.id]?.length) { %>
+            <ul class="msg-attachments">
+              <% for (const a of attachmentsByMessage[m.id]) { %>
+                <li>
+                  <a class="link" href="/tickets/<%= ticket.id %>/attachments/<%= a.id %>" target="_blank" rel="noopener">
+                    <%= a.filename %>
+                  </a>
+                  <span class="muted mono"><%= formatFileSize(a.size_bytes) %></span>
+                </li>
+              <% } %>
+            </ul>
+          <% } %>
+        </div>
+      <% } %>
+    </div>
+
+    <form method="post" action="/tickets/<%= ticket.id %>/note" class="stack" style="margin-top:16px">
+      <textarea name="body" rows="2" placeholder="Internal note (never emailed)"></textarea>
+      <button class="btn btn-ghost">Add note</button>
+    </form>
+    </div>
+  </div>
+
+  <div class="side-stack ticket-sidebar">
+    <div class="card">
+      <div class="card-head"><h2>Details</h2></div>
+      <form method="post" action="/tickets/<%= ticket.id %>/update" class="stack">
+        <label>Subject
+          <input name="subject" value="<%= ticket.subject %>" required>
+        </label>
+        <label>Client
+          <select name="client_id" id="client-select">
+            <option value="">Unassigned</option>
+            <% for (const c of clients) { %>
+              <option value="<%= c.id %>" <%= ticket.client_id === c.id ? 'selected' : '' %>><%= c.name %></option>
+            <% } %>
+          </select>
+        </label>
+        <label>Contact
+          <select name="contact_id">
+            <option value="">—</option>
+            <% for (const ct of contacts) { %>
+              <option value="<%= ct.id %>" <%= ticket.contact_id === ct.id ? 'selected' : '' %>><%= ct.name %><% if (ct.email) { %> (<%= ct.email %>)<% } %></option>
+            <% } %>
+          </select>
+        </label>
+        <div class="row-2">
+          <label>Status
+            <select name="status">
+              <% for (const s of statuses) { %>
+                <% if (s === 'closed') continue; %>
+                <option value="<%= s %>" <%= ticket.status === s ? 'selected' : '' %>><%= s.replace('_', ' ') %></option>
+              <% } %>
+            </select>
+          </label>
+          <label>Priority
+            <select name="priority">
+              <% for (const p of ['low', 'normal', 'high', 'critical']) { %>
+                <option <%= ticket.priority === p ? 'selected' : '' %>><%= p %></option>
+              <% } %>
+            </select>
+          </label>
+        </div>
+        <div class="row-2">
+          <label>Category
+            <select name="category">
+              <option value="">—</option>
+              <% for (const cat of categories) { %>
+                <option <%= ticket.category === cat ? 'selected' : '' %>><%= cat %></option>
+              <% } %>
+            </select>
+          </label>
+          <label>Follow-up
+            <input name="follow_up_at" type="datetime-local" value="<%= fmtDateTimeLocalInput(ticket.follow_up_at) %>">
+          </label>
+        </div>
+        <% if (ticket.requester_email) { %><p class="muted mono">from <%= ticket.requester_email %></p><% } %>
+        <% if (ticket.status !== 'closed') { %><p class="muted">Use <strong>Close ticket</strong> above when done — log time or mark not billable first.</p><% } %>
+        <button class="btn">Update</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Attachments</h2><span class="muted mono"><%= attachments.length %></span></div>
+      <% if (!attachments.length) { %>
+        <p class="empty">No attachments yet. Files from inbound email appear here after the mailbox poller runs.</p>
+      <% } else { %>
+        <ul class="attachment-list">
+          <% for (const a of attachments) { %>
+            <li>
+              <a class="link" href="/tickets/<%= ticket.id %>/attachments/<%= a.id %>" target="_blank" rel="noopener"><%= a.filename %></a>
+              <span class="muted mono"><%= formatFileSize(a.size_bytes) %></span>
+              <% if (a.message_author) { %><span class="muted">· <%= a.message_author %></span><% } %>
+            </li>
+          <% } %>
+        </ul>
+      <% } %>
+    </div>
+
+    <% if (events.length) { %>
+      <div class="card">
+        <div class="card-head"><h2>Activity</h2></div>
+        <ul class="event-list">
+          <% for (const e of events) { %>
+            <li>
+              <span class="mono muted"><%= fmtDateTimeShort(e.created_at) %></span>
+              <span class="event-action"><%= e.action %></span>
+              <% if (e.detail) { %><span class="muted"><%= e.detail %></span><% } %>
+            </li>
+          <% } %>
+        </ul>
+      </div>
+    <% } %>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Time</h2>
+        <span class="mono accent"><%= (totalMinutes / 60).toFixed(1) %>h</span>
+      </div>
+      <% if (ticket.billing_status === 'not_billable') { %>
+        <p class="muted"><span class="pill int-off">Not billable</span></p>
+      <% } %>
+      <% if (time.length) { %>
+        <div class="line-items">
+          <% for (const te of time) { %>
+            <% if (te.invoiced_at) { %>
+              <div class="line-item-readonly">
+                <div class="row-2">
+                  <span class="mono"><%= te.minutes %> min logged · <%= billableMinutes(te.minutes) %> min billed</span>
+                  <span class="pill int-ok">invoiced</span>
+                </div>
+                <div class="desc-multiline"><%= te.description || '—' %></div>
+              </div>
+            <% } else { %>
+              <form method="post" action="/tickets/<%= ticket.id %>/time/<%= te.id %>" class="line-item-form stack">
+                <div class="row-2">
+                  <label>Minutes <input name="minutes" type="number" min="1" value="<%= te.minutes %>" required></label>
+                  <label>Rate override <input name="rate_override" type="number" step="0.01" min="0" value="<%= te.rate_override ?? '' %>" placeholder="client/default"></label>
+                </div>
+                <label>Description (invoice detail — multiple lines OK)
+                  <textarea name="description" rows="4" class="desc-input" placeholder="What was done"><%= te.description || '' %></textarea>
+                </label>
+                <div class="row-2 line-item-actions">
+                  <label class="check"><input type="checkbox" name="billable" <%= te.billable ? 'checked' : '' %>> Billable</label>
+                  <button class="btn">Save entry</button>
+                </div>
+              </form>
+              <form method="post" action="/tickets/<%= ticket.id %>/time/<%= te.id %>/delete" class="line-item-delete" onsubmit="return confirm('Delete this time entry?')">
+                <button class="btn btn-ghost">Remove entry #<%= te.id %></button>
+              </form>
+            <% } %>
+          <% } %>
+        </div>
+      <% } else { %>
+        <p class="empty">No time logged yet. Use <strong>Log time</strong> above.</p>
+      <% } %>
+    </div>
+  </div>
+</section>
+
+<% if (mailReady && ticket.status !== 'closed') { %>
+<script src="https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.min.js"></script>
+<script src="/rte.js"></script>
+<% } %>
+
+<% if (ticket.client_id && ticket.status !== 'closed') { %>
+<div class="modal" id="log-time-modal" hidden>
+  <div class="modal-backdrop" data-close-modal="log-time"></div>
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="log-time-title">
+    <div class="modal-head">
+      <h2 id="log-time-title">Log time</h2>
+      <button type="button" class="btn-x" data-close-modal="log-time" aria-label="Close">×</button>
+    </div>
+    <form method="post" action="/tickets/<%= ticket.id %>/time" class="stack">
+      <div class="row-2">
+        <label>Minutes <input name="minutes" type="number" min="1" required autofocus></label>
+        <label>Rate override <input name="rate_override" type="number" step="0.01" min="0" placeholder="client/default"></label>
+      </div>
+      <label>Description (invoice detail — multiple lines OK)
+        <textarea name="description" rows="4" class="desc-input" placeholder="What was done"></textarea>
+      </label>
+      <label class="check"><input type="checkbox" name="billable" checked> Billable</label>
+      <p class="muted">Billable time rounds up to 15-minute blocks on the invoice.</p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" data-close-modal="log-time">Cancel</button>
+        <button class="btn">Log time</button>
+      </div>
+    </form>
+  </div>
+</div>
+<% } %>
+
+<% if (ticket.status !== 'closed') { %>
+<div class="modal" id="close-ticket-modal" hidden>
+  <div class="modal-backdrop" data-close-modal="close-ticket"></div>
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="close-ticket-title">
+    <div class="modal-head">
+      <h2 id="close-ticket-title">Close ticket</h2>
+      <button type="button" class="btn-x" data-close-modal="close-ticket" aria-label="Close">×</button>
+    </div>
+    <% if (billingResolved) { %>
+      <form method="post" action="/tickets/<%= ticket.id %>/close" class="stack">
+        <input type="hidden" name="mode" value="close">
+        <p>Close <strong><%= ticketRef(ticket) %></strong> — <%= ticket.subject %>?</p>
+        <% if (time.length) { %>
+          <p class="muted"><%= (totalMinutes / 60).toFixed(1) %>h logged on this ticket.</p>
+        <% } else if (ticket.billing_status === 'not_billable') { %>
+          <p class="muted">Marked not billable.</p>
+        <% } else if (!ticket.client_id) { %>
+          <p class="muted">No client assigned — no billing required.</p>
+        <% } %>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" data-close-modal="close-ticket">Cancel</button>
+          <button class="btn">Close ticket</button>
+        </div>
+      </form>
+    <% } else if (ticket.client_id) { %>
+      <p class="muted" style="margin-top:0">Log time or mark this ticket as not billable before closing.</p>
+      <form method="post" action="/tickets/<%= ticket.id %>/close" class="stack" style="margin-top:16px">
+        <input type="hidden" name="mode" value="log_and_close">
+        <h3 style="margin:0;font-size:14px">Log time and close</h3>
+        <div class="row-2">
+          <label>Minutes <input name="minutes" type="number" min="1" required></label>
+          <label>Rate override <input name="rate_override" type="number" step="0.01" min="0" placeholder="client/default"></label>
+        </div>
+        <label>Description
+          <textarea name="description" rows="3" class="desc-input" placeholder="What was done"></textarea>
+        </label>
+        <label class="check"><input type="checkbox" name="billable" checked> Billable</label>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" data-close-modal="close-ticket">Cancel</button>
+          <button class="btn">Log time &amp; close</button>
+        </div>
+      </form>
+      <form method="post" action="/tickets/<%= ticket.id %>/close" class="stack" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line)"
+            onsubmit="return confirm('Mark this ticket as not billable and close it?')">
+        <input type="hidden" name="mode" value="not_billable">
+        <p class="muted" style="margin:0">No charge for this work — warranty, goodwill, internal, etc.</p>
+        <div class="modal-actions">
+          <button class="btn btn-ghost">Not billable — close</button>
+        </div>
+      </form>
+    <% } else { %>
+      <form method="post" action="/tickets/<%= ticket.id %>/close" class="stack">
+        <input type="hidden" name="mode" value="close">
+        <p>No client assigned — close without billing?</p>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" data-close-modal="close-ticket">Cancel</button>
+          <button class="btn">Close ticket</button>
+        </div>
+      </form>
+    <% } %>
+  </div>
+</div>
+<% } %>
+
+<% if (mergeCandidates.length) { %>
+<div class="modal" id="merge-ticket-modal" hidden>
+  <div class="modal-backdrop" data-close-modal="merge-ticket"></div>
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="merge-ticket-title">
+    <div class="modal-head">
+      <h2 id="merge-ticket-title">Merge ticket</h2>
+      <button type="button" class="btn-x" data-close-modal="merge-ticket" aria-label="Close">×</button>
+    </div>
+    <form method="post" action="/tickets/<%= ticket.id %>/merge" class="stack" onsubmit="return confirm('Merge the other ticket into this one? Its messages and time will move here and it will be closed.')">
+      <label>Merge into <%= ticketRef(ticket) %>
+        <select name="merge_ref" required>
+          <option value="">Select ticket…</option>
+          <% for (const mt of mergeCandidates) { %>
+            <option value="<%= ticketRef(mt) %>"><%= ticketRef(mt) %> — <%= mt.subject %><% if (mt.client_name) { %> (<%= mt.client_name %>)<% } %></option>
+          <% } %>
+        </select>
+      </label>
+      <p class="muted">Moves all messages, time entries, attachments, and activity from the other ticket here, then closes it.</p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" data-close-modal="merge-ticket">Cancel</button>
+        <button class="btn">Merge</button>
+      </div>
+    </form>
+  </div>
+</div>
+<% } %>
+
+<script>
+(() => {
+  const modals = new Map();
+
+  function registerModal(id, openBtnId) {
+    const modal = document.getElementById(id);
+    if (!modal) return;
+    modals.set(id, modal);
+    const openBtn = openBtnId ? document.getElementById(openBtnId) : null;
+    const focusSelector = modal.dataset.focus;
+
+    function openModal() {
+      modal.hidden = false;
+      document.body.classList.add('modal-open');
+      const focusEl = focusSelector ? modal.querySelector(focusSelector) : modal.querySelector('input, select, textarea, button');
+      focusEl?.focus();
+    }
+
+    function closeModal() {
+      modal.hidden = true;
+      if ([...modals.values()].every((m) => m.hidden)) {
+        document.body.classList.remove('modal-open');
+      }
+    }
+
+    openBtn?.addEventListener('click', openModal);
+    modal.querySelectorAll(`[data-close-modal="${id.replace('-modal', '')}"]`).forEach((el) => {
+      el.addEventListener('click', closeModal);
+    });
+    modal._close = closeModal;
+  }
+
+  registerModal('log-time-modal', 'open-log-time');
+  registerModal('close-ticket-modal', 'open-close-ticket');
+  registerModal('merge-ticket-modal', 'open-merge-ticket');
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    for (const modal of modals.values()) {
+      if (!modal.hidden) {
+        modal._close?.();
+        break;
+      }
+    }
+  });
+
+  <% if (flash && flashKind === 'err' && flash.toLowerCase().includes('billing')) { %>
+  document.getElementById('open-close-ticket')?.click();
+  <% } %>
+})();
+</script>
+
+<%- include('partials/foot') %>

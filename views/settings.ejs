@@ -1,0 +1,160 @@
+<%- include('partials/head') %>
+
+<header class="page-head"><h1>Settings</h1></header>
+
+<section class="grid-2">
+  <div class="card">
+    <div class="card-head"><h2>Rates &amp; Xero coding</h2></div>
+    <form method="post" action="/settings" class="stack">
+      <div class="row-2">
+        <label>Default hourly rate <input name="default_hourly_rate" type="number" step="0.01" value="<%= values.default_hourly_rate %>"></label>
+        <label>Default licence markup % <input name="default_markup_pct" type="number" step="0.1" value="<%= values.default_markup_pct %>"></label>
+      </div>
+      <div class="row-2">
+        <label>Labour account code <input name="xero_labour_account" value="<%= values.xero_labour_account %>"></label>
+        <label>Licence account code <input name="xero_licence_account" value="<%= values.xero_licence_account %>"></label>
+      </div>
+      <div class="row-2">
+        <label>Agreement account code <input name="xero_agreement_account" value="<%= values.xero_agreement_account %>"></label>
+        <label>Tax type <input name="xero_tax_type" value="<%= values.xero_tax_type %>" placeholder="OUTPUT (GST on income)"></label>
+      </div>
+      <div class="row-2">
+        <label>Mail poll (minutes) <input name="mail_poll_minutes" type="number" min="1" value="<%= values.mail_poll_minutes %>"></label>
+        <label>Pax8 sync (hours) <input name="pax8_sync_hours" type="number" min="1" value="<%= values.pax8_sync_hours %>"></label>
+        <label>Daily digest hour (local time) <input name="telegram_digest_hour" type="number" min="0" max="23" value="<%= values.telegram_digest_hour %>"></label>
+        <label>Auto-close waiting tickets (days, 0 = off) <input name="ticket_auto_close_days" type="number" min="0" value="<%= values.ticket_auto_close_days %>"></label>
+        <label>Timezone (IANA name)
+          <input name="app_timezone" value="<%= values.app_timezone || 'Australia/Perth' %>" placeholder="Australia/Perth" list="tz-suggestions">
+          <datalist id="tz-suggestions">
+            <option>Australia/Perth</option><option>Australia/Sydney</option><option>Australia/Brisbane</option>
+            <option>Australia/Adelaide</option><option>Australia/Melbourne</option><option>Pacific/Auckland</option>
+            <option>Europe/London</option><option>America/New_York</option><option>UTC</option>
+          </datalist>
+        </label>
+        <label>Follow-up warning (minutes before) <input name="follow_up_pre_nudge_minutes" type="number" min="1" max="1440" value="<%= values.follow_up_pre_nudge_minutes || 15 %>"></label>
+        <label>Assistant model
+          <select name="assistant_model">
+            <% for (const m of ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5']) { %>
+              <option value="<%= m %>" <%= (values.assistant_model || 'claude-opus-4-8') === m ? 'selected' : '' %>><%= m %></option>
+            <% } %>
+          </select>
+        </label>
+      </div>
+      <button class="btn">Save settings</button>
+      <p class="muted">Poll/sync interval changes apply after a restart.</p>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Connections</h2></div>
+    <ul class="int-list">
+      <li>
+        <span class="int-name">Xero</span>
+        <% if (xero.connected) { %>
+          <span class="pill int-ok">connected<%= xero.tenant ? ' · ' + xero.tenant : '' %></span>
+          <a class="link" href="/auth/xero">Reconnect</a>
+        <% } else if (xero.configured) { %>
+          <span class="pill int-off">not connected</span>
+          <a class="btn" href="/auth/xero">Connect Xero</a>
+        <% } else { %>
+          <span class="pill int-off">set XERO_* in .env</span>
+        <% } %>
+      </li>
+      <li>
+        <span class="int-name">Pax8</span>
+        <% if (pax8Configured) { %>
+          <span class="pill int-ok">configured</span>
+          <% if (lastSync) { %><span class="muted mono">last sync <%= fmtDateTime(lastSync) %></span><% } %>
+        <% } else { %>
+          <span class="pill int-off">set PAX8_* in .env</span>
+        <% } %>
+      </li>
+      <li>
+        <span class="int-name">Assistant</span>
+        <% if (assistantOn) { %>
+          <span class="pill int-ok">Claude connected</span>
+          <span class="muted">chat widget + Telegram natural language</span>
+        <% } else { %>
+          <span class="pill int-off">set ANTHROPIC_API_KEY in .env</span>
+        <% } %>
+      </li>
+      <li>
+        <span class="int-name">Teams</span>
+        <% if (teamsBotOn) { %>
+          <span class="pill int-ok">bot connected</span>
+          <span class="muted">interactive chat<%= teamsOn ? ' · webhook notifications' : '' %></span>
+        <% } else if (teamsOn) { %>
+          <span class="pill int-ok">webhook set</span>
+          <span class="muted">notifications only — set TEAMS_BOT_* for interactive chat</span>
+        <% } else { %>
+          <span class="pill int-off">set TEAMS_WEBHOOK_URL or TEAMS_BOT_* in .env</span>
+        <% } %>
+      </li>
+      <li>
+        <span class="int-name">M365 mail</span>
+        <% if (graphConfigured) { %>
+          <span class="pill int-ok">polling <%= mailbox %></span>
+          <% if (lastPoll) { %><span class="muted mono">last poll <%= fmtDateTime(lastPoll) %></span><% } %>
+        <% } else { %>
+          <span class="pill int-off">set MS_* + SUPPORT_MAILBOX in .env</span>
+        <% } %>
+      </li>
+    </ul>
+    <div class="inline-form" style="margin-top:12px">
+      <form method="post" action="/jobs/poll-mail"><button class="btn btn-ghost">Poll mailbox now</button></form>
+      <% if (pax8Configured) { %>
+        <form method="post" action="/jobs/sync-pax8"><button class="btn btn-ghost">Sync Pax8 now</button></form>
+      <% } %>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Sync log</h2></div>
+    <% if (jobLog.length) { %>
+      <ul class="job-log">
+        <% for (const j of jobLog) { %>
+          <li>
+            <span class="muted mono"><%= fmtDateTimeShort(j.created_at) %></span>
+            <span class="pill <%= j.ok ? 'int-ok' : 'pri-critical' %>"><%= j.job %></span>
+            <span class="job-detail <%= j.ok ? 'muted' : 'accent' %>"><%= j.detail || (j.ok ? 'ok' : 'failed') %></span>
+          </li>
+        <% } %>
+      </ul>
+    <% } else { %>
+      <p class="empty">No poll or sync attempts recorded yet. Use “Poll mailbox now” — successes and failures both land here.</p>
+    <% } %>
+    <p class="muted">Mail polls every <span class="mono"><%= pollMinutes %></span> min when configured. A run that never appears here means the poller isn't firing at all.</p>
+  </div>
+</section>
+
+<div class="card">
+  <div class="card-head">
+    <h2>Pax8 product pricing</h2>
+    <span class="muted">Blank sell = Pax8 RRP from sync; override here if needed</span>
+  </div>
+  <% if (!products.length) { %>
+    <p class="empty">No products yet — run a Pax8 sync first.</p>
+  <% } else { %>
+    <form method="post" action="/settings/products">
+      <table class="table">
+        <thead><tr><th>Product</th><th>Vendor</th><th class="num">Seats</th><th class="num">Buy</th><th class="num">Sell (override)</th><th class="num">Effective</th></tr></thead>
+        <tbody>
+          <% for (const p of products) {
+               const eff = p.sell_price != null ? p.sell_price : (p.buy_price || 0) * (1 + markupPct / 100); %>
+            <tr>
+              <td><%= p.name || p.id %></td>
+              <td class="muted"><%= p.vendor || '—' %></td>
+              <td class="num mono"><%= p.seats %></td>
+              <td class="num mono"><%= money(p.buy_price || 0) %></td>
+              <td class="num"><input class="cell-input" name="sell_<%= p.id %>" type="number" step="0.01" min="0" value="<%= p.sell_price ?? '' %>" placeholder="auto"></td>
+              <td class="num mono accent"><%= money(eff) %></td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+      <div class="run-actions"><button class="btn">Save sell prices</button></div>
+    </form>
+  <% } %>
+</div>
+
+<%- include('partials/foot') %>

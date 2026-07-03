@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Solo PSA</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,400..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body class="login-body">
+  <div class="login-shell">
+    <div class="login-brand">
+      <span class="brand-mark"></span>
+      <span class="brand-name">Solo&nbsp;PSA</span>
+    </div>
+    <div class="card login-card">
+      <h1>Sign in</h1>
+      <% if (flash) { %>
+        <div class="flash <%= flashKind === 'err' ? 'flash-err' : 'flash-ok' %>"><%= flash %></div>
+      <% } %>
+      <form method="post" action="/login" class="stack">
+        <input type="hidden" name="next" value="<%= next %>">
+        <label>Password
+          <input name="password" type="password" autocomplete="current-password" autofocus required>
+        </label>
+        <button class="btn btn-big">Sign in</button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>

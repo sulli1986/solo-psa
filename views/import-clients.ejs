@@ -1,0 +1,66 @@
+<%- include('partials/head') %>
+
+<header class="page-head">
+  <h1>Import clients</h1>
+  <a class="link" href="/clients">← Back to clients</a>
+</header>
+
+<p class="muted">Link Pax8 companies and Xero contacts so subscriptions, prorata charges, and invoicing stay in sync. Run a Pax8 sync first to refresh the company list.</p>
+
+<section class="grid-2">
+  <div class="card">
+    <div class="card-head"><h2>From Pax8</h2></div>
+    <% if (!pax8Configured) { %>
+      <p class="empty">Set <span class="mono">PAX8_*</span> in .env and run a sync from Settings.</p>
+    <% } else if (!pax8Companies.length) { %>
+      <p class="empty">All Pax8 companies are linked, or none synced yet. Run <strong>Sync Pax8 now</strong> in Settings.</p>
+    <% } else { %>
+      <table class="table">
+        <thead><tr><th>Company</th><th></th></tr></thead>
+        <tbody>
+          <% for (const pc of pax8Companies) { %>
+            <tr>
+              <td><%= pc.name %><br><span class="muted mono"><%= pc.id %></span></td>
+              <td>
+                <form method="post" action="/clients/import/pax8">
+                  <input type="hidden" name="pax8_company_id" value="<%= pc.id %>">
+                  <button class="btn btn-ghost">Create client</button>
+                </form>
+              </td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+    <% } %>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>From Xero</h2></div>
+    <% if (!xeroConnected) { %>
+      <p class="empty">Connect Xero from <a class="link" href="/settings">Settings</a> first.</p>
+    <% } else if (xeroError) { %>
+      <p class="empty flash-err"><%= xeroError %></p>
+    <% } else if (!xeroContacts.length) { %>
+      <p class="empty">No unlinked Xero customer contacts found.</p>
+    <% } else { %>
+      <table class="table">
+        <thead><tr><th>Contact</th><th></th></tr></thead>
+        <tbody>
+          <% for (const xc of xeroContacts) { %>
+            <tr>
+              <td><%= xc.name %><% if (xc.email) { %><br><span class="muted mono"><%= xc.email %></span><% } %></td>
+              <td>
+                <form method="post" action="/clients/import/xero">
+                  <input type="hidden" name="xero_contact_id" value="<%= xc.id %>">
+                  <button class="btn btn-ghost">Create client</button>
+                </form>
+              </td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+    <% } %>
+  </div>
+</section>
+
+<%- include('partials/foot') %>

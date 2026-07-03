@@ -1,0 +1,20 @@
+<aside class="rail">
+  <div class="brand">
+    <span class="brand-mark"></span>
+    <span class="brand-name">Solo&nbsp;PSA</span>
+  </div>
+  <nav class="rail-nav">
+    <a href="/" class="<%= path === '/' ? 'active' : '' %>">Dashboard</a>
+    <a href="/tickets" class="<%= path.startsWith('/tickets') ? 'active' : '' %>">Tickets</a>
+    <a href="/clients" class="<%= path.startsWith('/clients') ? 'active' : '' %>">Clients</a>
+    <a href="/billing" class="<%= path.startsWith('/billing') ? 'active' : '' %>">Billing</a>
+    <a href="/settings" class="<%= path.startsWith('/settings') ? 'active' : '' %>">Settings</a>
+  </nav>
+  <div class="rail-foot">
+    <% if (authEnabled) { %>
+      <form method="post" action="/logout"><button class="btn btn-ghost btn-logout" type="submit">Sign out</button></form>
+    <% } else { %>
+      one operator, one pane
+    <% } %>
+  </div>
+</aside>

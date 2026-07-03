@@ -1,0 +1,7 @@
+node_modules/
+.env
+psa.sqlite
+psa.sqlite-wal
+psa.sqlite-shm
+data/attachments/*
+!data/attachments/.gitkeep

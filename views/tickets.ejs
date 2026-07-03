@@ -1,0 +1,222 @@
+<%- include('partials/head') %>
+
+<header class="page-head">
+  <h1>Tickets</h1>
+  <div class="page-head-right">
+    <div class="seg">
+      <% const tabs = ['active', 'open', 'in_progress', 'waiting', 'closed', 'all']; %>
+      <% for (const s of tabs) { %>
+        <a href="/tickets?status=<%= s %><%= q ? '&q=' + encodeURIComponent(q) : '' %><%= clientId ? '&client_id=' + clientId : '' %>"
+           class="<%= status === s ? 'active' : '' %>"><%= s === 'in_progress' ? 'In progress' : s.charAt(0).toUpperCase() + s.slice(1) %></a>
+      <% } %>
+    </div>
+    <button type="button" class="btn" id="open-new-ticket">New ticket</button>
+  </div>
+</header>
+
+<div class="card">
+  <div class="card-head"><h2>Search &amp; filter</h2><span class="muted mono"><%= count %> ticket(s)</span></div>
+  <form method="get" action="/tickets" class="inline-form wrap">
+    <input type="hidden" name="status" value="<%= status %>">
+    <input name="q" value="<%= q %>" placeholder="Search subject, client, TKT-00050, email…" style="flex:2">
+    <select name="client_id">
+      <option value="">All clients</option>
+      <% for (const c of clients) { %>
+        <option value="<%= c.id %>" <%= clientId === c.id ? 'selected' : '' %>><%= c.name %></option>
+      <% } %>
+    </select>
+    <button class="btn">Search</button>
+    <% if (q || clientId) { %>
+      <a class="btn btn-ghost" href="/tickets?status=<%= status %>">Clear</a>
+    <% } %>
+  </form>
+</div>
+
+<div class="modal" id="new-ticket-modal" hidden>
+  <div class="modal-backdrop" data-close-modal></div>
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="new-ticket-title">
+    <div class="modal-head">
+      <h2 id="new-ticket-title">New ticket</h2>
+      <button type="button" class="btn-x" data-close-modal aria-label="Close">×</button>
+    </div>
+    <form method="post" action="/tickets" class="stack">
+      <label>Client
+        <select name="client_id">
+          <option value="">Unassigned</option>
+          <% for (const c of clients) { %><option value="<%= c.id %>"><%= c.name %></option><% } %>
+        </select>
+      </label>
+      <label>Subject
+        <input name="subject" id="new-ticket-subject" placeholder="What is this about?" required>
+      </label>
+      <div class="row-2">
+        <label>Priority
+          <select name="priority">
+            <option>low</option><option selected>normal</option><option>high</option><option>critical</option>
+          </select>
+        </label>
+        <label>Category
+          <select name="category">
+            <option value="">No category</option>
+            <% for (const cat of categories) { %><option><%= cat %></option><% } %>
+          </select>
+        </label>
+      </div>
+      <label>Description (optional internal note)
+        <textarea name="body" rows="4" placeholder="Initial details…"></textarea>
+      </label>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" data-close-modal>Cancel</button>
+        <button class="btn">Create ticket</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <% if (!tickets.length) { %>
+    <p class="empty">No tickets match this filter.</p>
+  <% } else { %>
+    <form method="post" action="/tickets/bulk" id="bulk-form" class="bulk-form">
+      <input type="hidden" name="redirect" value="/tickets?<%= listQuery %>">
+      <div class="bulk-bar">
+        <label class="check bulk-check"><input type="checkbox" id="select-all"> All on page</label>
+        <select name="action" id="bulk-action">
+          <option value="set_status">Set status</option>
+          <option value="close">Close</option>
+          <option value="delete">Delete</option>
+        </select>
+        <select name="status" id="bulk-status">
+          <% for (const s of statuses) { %>
+            <option value="<%= s %>"><%= s.replace('_', ' ') %></option>
+          <% } %>
+        </select>
+        <button class="btn" type="submit">Apply</button>
+        <span class="muted mono" id="bulk-count">0 selected</span>
+      </div>
+      <table class="table">
+        <thead>
+          <tr>
+            <th class="col-check"></th>
+            <th>Ref</th><th>Subject</th><th>Client</th><th>Category</th><th>Source</th>
+            <th>Priority</th><th>Status</th><th class="num">Time</th><th>Updated</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% for (const t of tickets) { %>
+            <tr class="<%= t.is_stale ? 'row-stale' : '' %>">
+              <td class="col-check">
+                <input type="checkbox" class="ticket-check" name="ids" value="<%= t.id %>">
+              </td>
+              <td class="mono">
+                <a class="link" href="/tickets/<%= t.id %>"><%= ticketRef(t) %></a>
+                <% if (t.follow_up_overdue) { %>
+                  <span class="pill st-overdue" title="Follow-up overdue">!</span>
+                <% } else if (t.follow_up_today) { %>
+                  <span class="pill st-today" title="Follow-up today">today</span>
+                <% } %>
+                <% if (t.is_stale) { %><span class="pill st-stale" title="No activity in 7+ days">stale</span><% } %>
+              </td>
+              <td><%= t.subject %></td>
+              <td><%= t.client_name || '—' %></td>
+              <td class="muted"><%= t.category || '—' %></td>
+              <td class="mono"><%= t.source %></td>
+              <td><span class="pill pri-<%= t.priority %>"><%= t.priority %></span></td>
+              <td><span class="pill st-<%= t.status %>"><%= t.status.replace('_', ' ') %></span></td>
+              <td class="num mono"><%= (t.minutes / 60).toFixed(1) %>h</td>
+              <td class="mono muted"><%= fmtDateTime(t.updated_at) %></td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+    </form>
+    <% if (totalPages > 1) { %>
+      <div class="pager">
+        <% if (page > 1) { %>
+          <a class="btn btn-ghost" href="/tickets?status=<%= status %>&page=<%= page - 1 %><%= q ? '&q=' + encodeURIComponent(q) : '' %><%= clientId ? '&client_id=' + clientId : '' %>">← Prev</a>
+        <% } %>
+        <span class="muted mono">Page <%= page %> of <%= totalPages %></span>
+        <% if (page < totalPages) { %>
+          <a class="btn btn-ghost" href="/tickets?status=<%= status %>&page=<%= page + 1 %><%= q ? '&q=' + encodeURIComponent(q) : '' %><%= clientId ? '&client_id=' + clientId : '' %>">Next →</a>
+        <% } %>
+      </div>
+    <% } %>
+  <% } %>
+</div>
+
+<script>
+(function () {
+  const modal = document.getElementById('new-ticket-modal');
+  const openBtn = document.getElementById('open-new-ticket');
+  const subjectInput = document.getElementById('new-ticket-subject');
+
+  function openModal() {
+    if (!modal) return;
+    modal.hidden = false;
+    document.body.classList.add('modal-open');
+    subjectInput?.focus();
+  }
+
+  function closeModal() {
+    if (!modal) return;
+    modal.hidden = true;
+    document.body.classList.remove('modal-open');
+  }
+
+  openBtn?.addEventListener('click', openModal);
+  modal?.querySelectorAll('[data-close-modal]').forEach((el) => {
+    el.addEventListener('click', closeModal);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal && !modal.hidden) closeModal();
+  });
+  <% if (flash && flashKind === 'err' && flash.toLowerCase().includes('subject')) { %>
+  openModal();
+  <% } %>
+
+  const form = document.getElementById('bulk-form');
+  if (!form) return;
+  const selectAll = document.getElementById('select-all');
+  const checks = () => [...form.querySelectorAll('.ticket-check')];
+  const countEl = document.getElementById('bulk-count');
+  const actionEl = document.getElementById('bulk-action');
+  const statusEl = document.getElementById('bulk-status');
+
+  function updateCount() {
+    const n = checks().filter((c) => c.checked).length;
+    countEl.textContent = n + ' selected';
+    selectAll.checked = n > 0 && n === checks().length;
+    selectAll.indeterminate = n > 0 && n < checks().length;
+  }
+
+  function syncStatusVisibility() {
+    statusEl.style.display = actionEl.value === 'set_status' ? '' : 'none';
+  }
+
+  selectAll.addEventListener('change', () => {
+    checks().forEach((c) => { c.checked = selectAll.checked; });
+    updateCount();
+  });
+  checks().forEach((c) => c.addEventListener('change', updateCount));
+  actionEl.addEventListener('change', syncStatusVisibility);
+  syncStatusVisibility();
+  updateCount();
+
+  form.addEventListener('submit', (e) => {
+    const n = checks().filter((c) => c.checked).length;
+    if (!n) {
+      e.preventDefault();
+      alert('Select at least one ticket.');
+      return;
+    }
+    const action = actionEl.value;
+    if (action === 'delete' && !confirm('Delete ' + n + ' ticket(s)? Tickets with invoiced time will be skipped.')) {
+      e.preventDefault();
+    } else if (action === 'close' && !confirm('Close ' + n + ' ticket(s)?')) {
+      e.preventDefault();
+    }
+  });
+})();
+</script>
+
+<%- include('partials/foot') %>

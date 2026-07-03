@@ -1,0 +1,19 @@
+[Unit]
+Description=Solo PSA
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=psa
+WorkingDirectory=/opt/psa
+EnvironmentFile=/opt/psa/.env
+ExecStart=/usr/bin/node src/server.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/opt/psa /opt/psa/data /opt/psa/data/attachments
+
+[Install]
+WantedBy=multi-user.target

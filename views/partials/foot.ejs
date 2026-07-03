@@ -1,0 +1,88 @@
+  </main>
+</div>
+<% if (typeof assistantEnabled !== 'undefined' && assistantEnabled && path !== '/login') { %>
+<button id="chat-fab" title="Assistant" aria-label="Open assistant chat">✦</button>
+<div id="chat-panel" hidden>
+  <div class="chat-head">
+    <strong>Assistant</strong>
+    <span>
+      <button id="chat-clear" class="chat-icon-btn" title="New conversation">⟳</button>
+      <button id="chat-close" class="chat-icon-btn" title="Close">×</button>
+    </span>
+  </div>
+  <div id="chat-messages" class="chat-messages">
+    <div class="chat-msg chat-assistant">Hi — tell me what you need in plain English. e.g. “Charge Oasis $450 for a laptop setup”, “log 2 hours on the printer ticket”, or “what's ready to bill this month?”</div>
+  </div>
+  <form id="chat-form" class="chat-input">
+    <textarea id="chat-text" rows="2" placeholder="Type a request…" required></textarea>
+    <button class="btn" type="submit">Send</button>
+  </form>
+</div>
+<script>
+(function () {
+  const fab = document.getElementById('chat-fab');
+  const panel = document.getElementById('chat-panel');
+  const list = document.getElementById('chat-messages');
+  const form = document.getElementById('chat-form');
+  const input = document.getElementById('chat-text');
+  let history = [];
+  try { history = JSON.parse(sessionStorage.getItem('psa-chat') || '[]'); } catch { /* fresh */ }
+
+  function addMsg(role, text) {
+    const div = document.createElement('div');
+    div.className = 'chat-msg ' + (role === 'user' ? 'chat-user' : 'chat-assistant');
+    div.textContent = text;
+    list.appendChild(div);
+    list.scrollTop = list.scrollHeight;
+    return div;
+  }
+  for (const m of history) addMsg(m.role, m.content);
+
+  function save() {
+    sessionStorage.setItem('psa-chat', JSON.stringify(history.slice(-20)));
+  }
+
+  fab.addEventListener('click', () => { panel.hidden = false; fab.hidden = true; input.focus(); });
+  document.getElementById('chat-close').addEventListener('click', () => { panel.hidden = true; fab.hidden = false; });
+  document.getElementById('chat-clear').addEventListener('click', () => {
+    history = [];
+    save();
+    list.querySelectorAll('.chat-msg').forEach((el, i) => { if (i > 0) el.remove(); });
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); }
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+    history.push({ role: 'user', content: text });
+    addMsg('user', text);
+    save();
+    const pending = addMsg('assistant', '…');
+    try {
+      const res = await fetch('/assistant/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: history.slice(-20) })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Request failed');
+      pending.textContent = data.reply;
+      history.push({ role: 'assistant', content: data.reply });
+      save();
+    } catch (err) {
+      pending.textContent = 'Error: ' + err.message;
+      pending.classList.add('chat-error');
+      history.pop();
+      save();
+    }
+    list.scrollTop = list.scrollHeight;
+  });
+})();
+</script>
+<% } %>
+</body>
+</html>

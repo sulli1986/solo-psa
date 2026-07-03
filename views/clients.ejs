@@ -1,0 +1,100 @@
+<%- include('partials/head') %>
+
+<header class="page-head">
+  <h1>Clients</h1>
+  <div class="seg">
+    <a href="/clients" class="<%= show === 'active' ? 'active' : '' %>">Active</a>
+    <a href="/clients?show=archived" class="<%= show === 'archived' ? 'active' : '' %>">Archived</a>
+  </div>
+  <div class="inline-form">
+    <a class="btn btn-ghost" href="/clients/import">Import from Pax8 / Xero</a>
+    <form method="post" action="/clients" class="inline-form">
+      <input name="name" placeholder="New client name" required>
+      <button class="btn">Add client</button>
+    </form>
+  </div>
+</header>
+
+<% if (show === 'active') { %>
+<section class="stat-row stat-row-4">
+  <div class="stat"><span class="stat-n"><%= totals.clients %></span><span class="stat-l">Active clients</span></div>
+  <div class="stat"><span class="stat-n"><%= money(totals.mrr) %></span><span class="stat-l">Monthly recurring</span></div>
+  <div class="stat">
+    <span class="stat-n"><%= (totals.unbilledMinutes / 60).toFixed(1) %>h</span>
+    <span class="stat-l">Unbilled time · ≈<%= money(totals.unbilledValue) %></span>
+  </div>
+  <div class="stat"><span class="stat-n"><%= totals.openTickets %></span><span class="stat-l">Open tickets</span></div>
+</section>
+<% } %>
+
+<div class="card">
+  <div class="card-head"><h2>Search &amp; sort</h2><span class="muted mono"><%= clients.length %> client(s)</span></div>
+  <form method="get" action="/clients" class="inline-form wrap">
+    <% if (show === 'archived') { %><input type="hidden" name="show" value="archived"><% } %>
+    <input name="q" value="<%= q %>" placeholder="Search name or agreement…" style="flex:2">
+    <select name="sort">
+      <option value="name" <%= sort === 'name' ? 'selected' : '' %>>Sort: Name</option>
+      <option value="mrr" <%= sort === 'mrr' ? 'selected' : '' %>>Sort: MRR (high → low)</option>
+      <option value="unbilled" <%= sort === 'unbilled' ? 'selected' : '' %>>Sort: Unbilled time</option>
+      <option value="tickets" <%= sort === 'tickets' ? 'selected' : '' %>>Sort: Open tickets</option>
+    </select>
+    <button class="btn">Apply</button>
+    <% if (q || sort !== 'name') { %>
+      <a class="btn btn-ghost" href="/clients<%= show === 'archived' ? '?show=archived' : '' %>">Clear</a>
+    <% } %>
+  </form>
+</div>
+
+<div class="card">
+  <% if (!clients.length) { %>
+    <% if (show === 'archived') { %>
+      <p class="empty">No archived clients<%= q ? ' match this search' : '' %>.</p>
+    <% } else { %>
+      <p class="empty"><%= q ? 'No clients match this search.' : 'No clients yet. Add your first client above — link Pax8 and Xero from its page.' %></p>
+    <% } %>
+  <% } else { %>
+    <div class="table-wrap">
+    <table class="table table-clients">
+      <thead>
+        <tr>
+          <th class="col-client">Client</th>
+          <th class="col-agreement">Agreement</th>
+          <th class="col-num num">MRR</th>
+          <th class="col-num num">Pax8 subs</th>
+          <th class="col-num num">Unbilled</th>
+          <th class="col-num num">Open tickets</th>
+          <th class="col-links">Links</th>
+          <% if (show === 'archived') { %><th class="col-action"></th><% } %>
+        </tr>
+      </thead>
+      <tbody>
+        <% for (const c of clients) { %>
+          <tr>
+            <td class="col-client"><a class="link" href="/clients/<%= c.id %>"><%= c.name %></a></td>
+            <td class="col-agreement muted"><%= c.agreement_name || '—' %></td>
+            <td class="col-num num mono"><%= c.mrr > 0 ? money(c.mrr) : '—' %></td>
+            <td class="col-num num mono"><%= c.subs %></td>
+            <td class="col-num num mono" title="≈<%= money(c.unbilled_value) %>"><%= (c.unbilled_minutes / 60).toFixed(1) %>h</td>
+            <td class="col-num num mono"><%= c.open_tickets %></td>
+            <td class="col-links">
+              <span class="cell-links">
+                <span class="pill <%= c.pax8_company_id ? 'int-ok' : 'int-off' %>">Pax8</span>
+                <span class="pill <%= c.xero_contact_id ? 'int-ok' : 'int-off' %>">Xero</span>
+              </span>
+            </td>
+            <% if (show === 'archived') { %>
+              <td class="col-action">
+                <form method="post" action="/clients/<%= c.id %>/restore">
+                  <button class="btn btn-ghost">Restore</button>
+                </form>
+              </td>
+            <% } %>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+    </div>
+  <% } %>
+</div>
+
+<%- include('partials/foot') %>

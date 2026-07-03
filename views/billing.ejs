@@ -1,0 +1,284 @@
+<%- include('partials/head') %>
+
+<header class="page-head">
+  <h1>Billing</h1>
+  <div class="inline-form">
+    <a class="btn btn-ghost" href="/billing?period=<%= prevPeriod %>" title="Previous month">‹</a>
+    <form method="get" action="/billing" class="inline-form">
+      <input name="period" type="month" value="<%= period %>">
+      <button class="btn btn-ghost">Load period</button>
+    </form>
+    <a class="btn btn-ghost" href="/billing?period=<%= nextPeriod %>" title="Next month">›</a>
+  </div>
+</header>
+
+<section class="stat-row stat-row-4">
+  <div class="stat">
+    <span class="stat-n"><%= money(stats.ready) %></span>
+    <span class="stat-l">Ready to bill · <%= stats.clients %> client(s)</span>
+  </div>
+  <div class="stat">
+    <span class="stat-n"><%= money(stats.margin) %></span>
+    <span class="stat-l">Margin in run (Pax8 + services)</span>
+  </div>
+  <div class="stat">
+    <span class="stat-n"><%= (stats.labourMinutes / 60).toFixed(1) %>h</span>
+    <span class="stat-l">Labour in run · <%= money(stats.byKind.labour) %></span>
+  </div>
+  <div class="stat">
+    <span class="stat-n"><%= money(outstanding.due) %></span>
+    <span class="stat-l">Outstanding · <%= outstanding.n %> unpaid invoice(s)</span>
+  </div>
+</section>
+
+<% if (results) { %>
+  <div class="card">
+    <div class="card-head"><h2>Push results</h2></div>
+    <table class="table">
+      <thead><tr><th>Client</th><th>Result</th></tr></thead>
+      <tbody>
+        <% for (const r of results) { %>
+          <tr>
+            <td><%= r.client %></td>
+            <td>
+              <% if (r.ok) { %>
+                <span class="pill int-ok">draft created</span> <span class="mono"><%= r.number %> · <%= money(r.total) %></span>
+              <% } else { %>
+                <span class="pill pri-critical">failed</span> <span class="mono"><%= r.error %></span>
+              <% } %>
+            </td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+<% } %>
+
+<% if (!xeroReady) { %>
+  <div class="flash flash-err">Xero isn't connected. Previewing works, pushing won't — connect from <a class="link" href="/settings">Settings</a>.</div>
+<% } %>
+
+<% if (run.attention.length) { %>
+  <div class="card">
+    <div class="card-head"><h2>Needs attention — renewal month unknown</h2></div>
+    <p class="muted">These annual recurring services are <strong>excluded from every run</strong> until a renewal month is set (edit the service on the client page). Pax8 subscriptions never appear here — their renewals come straight from the Pax8 invoice.</p>
+    <ul class="ticket-list">
+      <% for (const a of run.attention) { %>
+        <li>
+          <a class="link" href="/clients/<%= a.clientId %>"><%= a.clientName %></a> —
+          <%= a.productName %>
+          <span class="pill int-off"><%= a.billingTerm || 'unknown term' %></span>
+        </li>
+      <% } %>
+    </ul>
+  </div>
+<% } %>
+
+<form method="post" action="/billing/push" id="billing-push">
+  <input type="hidden" name="period" value="<%= period %>">
+</form>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>Run preview — <%= run.label %></h2>
+      <span class="mono accent"><%= money(stats.ready) %> ready</span>
+    </div>
+    <% if (stats.ready > 0) { %>
+      <p class="muted mono billing-hint">
+        agreements <%= money(stats.byKind.agreement) %> ·
+        services <%= money(stats.byKind.service) %> ·
+        licences <%= money(stats.byKind.licence) %> ·
+        renewals <%= money(stats.byKind.renewal) %> ·
+        labour <%= money(stats.byKind.labour) %> ·
+        manual <%= money(stats.byKind.manual) %> ·
+        prorata <%= money(stats.byKind.prorate) %>
+      </p>
+    <% } %>
+    <p class="muted billing-hint">
+      Tick a client to include or exclude all its lines. Adjust individual lines below before pushing.
+      <a class="link" href="#" id="select-all-lines">Select all</a> ·
+      <a class="link" href="#" id="select-no-lines">Select none</a>
+    </p>
+    <% if (!run.items.length) { %>
+      <p class="empty">Nothing to bill for this period. Add agreement fees, sync Pax8, log billable time, or add manual charges.</p>
+    <% } %>
+    <% for (const item of run.items) { %>
+      <div class="run-client <%= item.alreadyInvoiced ? 'run-done' : '' %>" data-client="<%= item.client.id %>">
+        <div class="run-head">
+          <div class="run-head-left">
+            <% if (!item.alreadyInvoiced) { %>
+              <label class="check billing-client-check" title="Include or exclude all lines for this client">
+                <input type="checkbox" class="client-select-all" data-client="<%= item.client.id %>" checked>
+              </label>
+            <% } %>
+            <strong><%= item.client.name %></strong>
+          </div>
+          <span class="mono">
+            <%= money(item.total) %>
+            <% if (item.alreadyInvoiced) { %><span class="pill int-ok">already invoiced</span><% } %>
+          </span>
+        </div>
+        <div class="billing-lines">
+          <% for (const l of item.lines) { %>
+            <div class="billing-line <%= l.editable ? 'billing-line-editable' : '' %>">
+              <% if (!item.alreadyInvoiced) { %>
+                <label class="check billing-check">
+                  <input type="checkbox" class="line-select" name="line_keys" form="billing-push" value="<%= item.client.id %>:<%= l.lineKey %>" data-client="<%= item.client.id %>" checked>
+                </label>
+              <% } %>
+              <div class="billing-line-body">
+                <div class="billing-line-preview">
+                  <span class="mono kind-<%= l.kind %>"><%= l.kind %></span>
+                  <% if (l.kind === 'labour') { %>
+                    <span class="muted mono"><%= l.editMinutes %> min logged → <%= l.billedMinutes %> min billed · <%= money(l.unitAmount) %>/hr</span>
+                  <% } else if (l.kind === 'manual') { %>
+                    <span class="muted mono"><%= money(l.unitAmount) %> ex GST</span>
+                  <% } else if (l.kind === 'prorate' || l.kind === 'renewal') { %>
+                    <span class="muted mono"><%= money(l.unitAmount) %> sell · buy <%= money(l.editBuy || 0) %></span>
+                  <% } else { %>
+                    <span class="muted mono"><%= l.quantity %> × <%= money(l.unitAmount) %> = <%= money(l.quantity * l.unitAmount) %></span>
+                  <% } %>
+                  <% if (!l.editable) { %>
+                    <div class="desc-multiline billing-readonly-desc"><%= l.description %></div>
+                  <% } %>
+                </div>
+                <% if (l.editable && !item.alreadyInvoiced) { %>
+                  <% if (l.kind === 'labour') { %>
+                    <form method="post" action="/billing/time/<%= l.sourceId %>" class="line-item-form stack">
+                      <input type="hidden" name="period" value="<%= period %>">
+                      <label>Minutes logged
+                        <input name="minutes" type="number" min="1" value="<%= l.editMinutes %>" required>
+                      </label>
+                      <label>Invoice description (multiple lines OK)
+                        <textarea name="description" rows="6" class="desc-input" required><%= l.editDescription %></textarea>
+                      </label>
+                      <p class="muted">Preview on invoice: <span class="desc-multiline billing-preview-snippet"><%= l.description %></span></p>
+                      <div class="line-item-actions">
+                        <button class="btn">Save</button>
+                      </div>
+                    </form>
+                    <form method="post" action="/billing/time/<%= l.sourceId %>/delete" class="line-item-delete" onsubmit="return confirm('Remove this time entry?')">
+                      <input type="hidden" name="period" value="<%= period %>">
+                      <button class="btn btn-ghost">Delete time entry</button>
+                    </form>
+                  <% } else if (l.kind === 'manual') { %>
+                    <form method="post" action="/billing/charges/<%= l.sourceId %>" class="line-item-form stack">
+                      <input type="hidden" name="period" value="<%= period %>">
+                      <label>Invoice description (multiple lines OK)
+                        <textarea name="description" rows="6" class="desc-input" required><%= l.description %></textarea>
+                      </label>
+                      <label>Amount (ex GST)
+                        <input name="unit_amount" type="number" step="0.01" min="0.01" value="<%= l.editAmount %>" required>
+                      </label>
+                      <div class="line-item-actions">
+                        <button class="btn">Save</button>
+                      </div>
+                    </form>
+                    <form method="post" action="/billing/charges/<%= l.sourceId %>/delete" class="line-item-delete" onsubmit="return confirm('Remove this manual line?')">
+                      <input type="hidden" name="period" value="<%= period %>">
+                      <button class="btn btn-ghost">Delete manual line</button>
+                    </form>
+                  <% } else if (l.kind === 'prorate' || l.kind === 'renewal') { %>
+                    <form method="post" action="/billing/prorata/<%= l.sourceId %>" class="line-item-form stack">
+                      <input type="hidden" name="period" value="<%= period %>">
+                      <label>Invoice description (multiple lines OK)
+                        <textarea name="description" rows="6" class="desc-input" required><%= l.description %></textarea>
+                      </label>
+                      <div class="row-2">
+                        <label>Sell amount (ex GST)
+                          <input name="sell_amount" type="number" step="0.01" min="0.01" value="<%= l.editAmount %>" required>
+                        </label>
+                        <span class="muted" style="align-self:end;padding-bottom:10px">Pax8 buy: <%= money(l.editBuy || 0) %></span>
+                      </div>
+                      <div class="line-item-actions">
+                        <button class="btn">Save</button>
+                      </div>
+                    </form>
+                    <form method="post" action="/billing/prorata/<%= l.sourceId %>/delete" class="line-item-delete" onsubmit="return confirm('Remove this prorata line?')">
+                      <input type="hidden" name="period" value="<%= period %>">
+                      <button class="btn btn-ghost">Delete prorata line</button>
+                    </form>
+                  <% } %>
+                <% } else if (l.editable && item.alreadyInvoiced) { %>
+                  <div class="desc-multiline billing-readonly-desc"><%= l.description %></div>
+                <% } %>
+              </div>
+            </div>
+          <% } %>
+        </div>
+      </div>
+    <% } %>
+    <% if (run.items.some((i) => !i.alreadyInvoiced)) { %>
+      <div class="run-actions">
+        <button class="btn btn-big" form="billing-push" <%= xeroReady ? '' : 'disabled' %>>Create Xero drafts for selected lines</button>
+        <span class="muted">Drafts only — nothing is approved or sent until you do it in Xero. Unchecked lines stay unbilled for next time.</span>
+      </div>
+    <% } %>
+  </div>
+
+<div class="card">
+  <div class="card-head"><h2>Recent pushes</h2></div>
+  <% if (history.length) { %>
+    <table class="table">
+      <thead><tr><th>Client</th><th>Period</th><th>Invoice date</th><th>Xero #</th><th class="num">Total</th><th class="num">Due</th><th>Status</th></tr></thead>
+      <tbody>
+        <% for (const i of history) { %>
+          <tr>
+            <td><%= i.client_name %></td>
+            <td class="mono"><a class="link" href="/billing?period=<%= i.period %>"><%= i.period %></a></td>
+            <td class="mono"><%= fmtDate(i.invoice_date || i.created_at) %></td>
+            <td class="mono">
+              <% if (i.xeroUrl) { %>
+                <a class="link" href="<%= i.xeroUrl %>" target="_blank" rel="noopener"><%= i.xero_number || 'View in Xero' %></a>
+              <% } else { %>
+                <%= i.xero_number || i.xero_invoice_id || '—' %>
+              <% } %>
+            </td>
+            <td class="num mono"><%= money(i.total) %></td>
+            <td class="num mono"><%= i.amount_due != null && i.amount_due > 0 ? money(i.amount_due) : '—' %></td>
+            <td>
+              <% if (i.synced) { %><span class="pill int-ok">synced</span><% } else { %><span class="pill int-off">not synced</span><% } %>
+              <% const st = (i.status || 'draft').toLowerCase(); %>
+              <% if (st === 'paid') { %><span class="pill inv-paid">paid</span>
+              <% } else if (st === 'unpaid' || st === 'authorised' || st === 'submitted') { %><span class="pill inv-unpaid">unpaid</span>
+              <% } else if (st === 'draft') { %><span class="pill inv-draft">draft</span>
+              <% } else if (st === 'voided') { %><span class="pill pri-critical">voided</span>
+              <% } else { %><span class="pill int-off"><%= st %></span><% } %>
+            </td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  <% } else { %>
+    <p class="empty">No invoices pushed yet.</p>
+  <% } %>
+</div>
+
+<script>
+document.querySelectorAll('.client-select-all').forEach((master) => {
+  const clientId = master.dataset.client;
+  const lineChecks = () => [...document.querySelectorAll(`.line-select[data-client="${clientId}"]`)];
+  const syncMaster = () => {
+    const checks = lineChecks();
+    if (!checks.length) return;
+    master.checked = checks.every((c) => c.checked);
+    master.indeterminate = checks.some((c) => c.checked) && !master.checked;
+  };
+  master.addEventListener('change', () => {
+    const on = master.checked;
+    lineChecks().forEach((c) => { c.checked = on; });
+    master.indeterminate = false;
+  });
+  lineChecks().forEach((c) => c.addEventListener('change', syncMaster));
+  syncMaster();
+});
+
+function setAllLines(on) {
+  document.querySelectorAll('.line-select').forEach((c) => { c.checked = on; });
+  document.querySelectorAll('.client-select-all').forEach((m) => { m.checked = on; m.indeterminate = false; });
+}
+document.getElementById('select-all-lines')?.addEventListener('click', (e) => { e.preventDefault(); setAllLines(true); });
+document.getElementById('select-no-lines')?.addEventListener('click', (e) => { e.preventDefault(); setAllLines(false); });
+</script>
+
+<%- include('partials/foot') %>
