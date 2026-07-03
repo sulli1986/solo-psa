@@ -1,6 +1,6 @@
 // Pax8 integration: client-credentials auth, company + subscription sync.
 // Read-only: subscriptions become invoice lines at your sell price.
-import { db, getSetting, getNumberSetting } from '../db.js';
+import { db, getNumberSetting } from '../db.js';
 
 const TOKEN_URL = 'https://api.pax8.com/v1/token';
 const API = 'https://api.pax8.com/v1';

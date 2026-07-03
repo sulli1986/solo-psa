@@ -367,10 +367,3 @@ export async function runAssistant(history) {
   }
   return { reply: 'That took too many steps — try a more specific request.', actions };
 }
-
-// Exposed for tests: run a tool executor directly without calling the API.
-export function _executeTool(name, input) {
-  const fn = executors[name];
-  if (!fn) throw new Error(`Unknown tool ${name}`);
-  return fn(input || {});
-}

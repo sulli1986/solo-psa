@@ -241,8 +241,11 @@ r.get('/:id/attachments/:attachmentId', (req, res) => {
   if (!record) return res.status(404).send('Attachment not found');
   try {
     const data = readAttachmentFile(record);
-    res.setHeader('Content-Type', record.content_type || 'application/octet-stream');
-    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(record.filename)}"`);
+    // Force download and block MIME sniffing — an emailed HTML/SVG attachment served
+    // inline from our own origin would otherwise be a stored-XSS vector.
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(record.filename)}"`);
     res.send(data);
   } catch {
     res.status(404).send('File missing on disk');

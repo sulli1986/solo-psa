@@ -28,8 +28,32 @@ import teamsBotRouter from './integrations/teams-bot.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 
+app.disable('x-powered-by'); // don't advertise the framework/version
+
 app.set('view engine', 'ejs');
 app.set('views', join(__dirname, '..', 'views'));
+
+// Security headers on every response. The UI relies on inline <script>/<style>,
+// so script/style allow 'unsafe-inline'; the rest still blocks framing (clickjacking),
+// MIME sniffing, plugin/object embedding, and base-tag hijacking.
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'same-origin');
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data: https:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "frame-ancestors 'none'",
+    "form-action 'self'"
+  ].join('; '));
+  next();
+});
+
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(join(__dirname, '..', 'public')));
 

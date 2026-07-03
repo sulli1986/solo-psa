@@ -87,10 +87,6 @@ export function hourNowInTz() {
   }).format(new Date())) % 24;
 }
 
-export function appTimezone() {
-  return TZ();
-}
-
 export function isDateBeforeToday(value) {
   const s = String(value || '');
   // Datetimes are stored UTC — convert to the local date before comparing
