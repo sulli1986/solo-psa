@@ -67,7 +67,7 @@ All integrations are optional — the app runs without credentials so you can ex
 ## Quick start
 
 ```bash
-git clone https://github.com/yourusername/solo-psa.git
+git clone https://github.com/sulli1986/solo-psa.git
 cd solo-psa
 cp .env.example .env          # fill credentials as needed (all optional to boot)
 npm install
